@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Importe as telas para onde a splash pode redirecionar (ajuste os caminhos se necessário)
+// Importe as telas para onde a splash pode redirecionar
 import 'login_page.dart'; 
 import 'base_layout.dart';
 
@@ -15,100 +14,79 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  final String _fullText = "ambev";
-  String _displayedText = "";
-  int _currentIndex = 0;
-  Timer? _timer;
-  
-  bool _isFadingOut = false; 
+  late VideoPlayerController _controller;
+  bool _navigated = false; 
 
   @override
   void initState() {
     super.initState();
-    _startTyping();
-  }
+    
+    // AQUI FOI ALTERADO PARA O NOME EXATO DO SEU VÍDEO
+    _controller = VideoPlayerController.asset('assets/animacao-splash.mp4')
+      ..initialize().then((_) {
+        setState(() {});
+        _controller.setVolume(0.0); 
+        _controller.play();
+      });
 
-  void _startTyping() {
-    _timer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
-      if (_currentIndex < _fullText.length) {
-        setState(() {
-          _displayedText += _fullText[_currentIndex];
-          _currentIndex++;
-        });
-      } else {
-        _timer?.cancel();
-        
-        Future.delayed(const Duration(milliseconds: 800), () {
-          if (mounted) {
-            setState(() {
-              _isFadingOut = true;
-            });
-          }
-          
-          // O tempo de fade é 600ms. Quando acabar, verificamos o login.
-          Future.delayed(const Duration(milliseconds: 600), () async {
+    _controller.addListener(() {
+      if (_controller.value.isInitialized &&
+          !_controller.value.isPlaying &&
+          _controller.value.duration == _controller.value.position) {
             
-            // --- INÍCIO DA LÓGICA DE VALIDAÇÃO DE SESSÃO ---
-            final prefs = await SharedPreferences.getInstance();
-            
-            // 1. FORÇA A LIMPEZA TOTAL DO DISCO (mantido do seu código original)
-            await prefs.clear(); 
-            
-            final usuario = prefs.getString('usuario');
-            // --- FIM DA LÓGICA ---
-
-            if (mounted) {
-              // Decide silenciosamente qual será a próxima tela
-              Widget proximaTela = (usuario != null && usuario.isNotEmpty) 
-                  ? const BaseLayout() 
-                  : const LoginPage();
-
-              // Aplica a sua transição Fade na tela escolhida
-              Navigator.of(context).pushReplacement(
-                PageRouteBuilder(
-                  pageBuilder: (context, animation, secondaryAnimation) => proximaTela,
-                  transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: child,
-                    );
-                  },
-                  transitionDuration: const Duration(milliseconds: 800),
-                ),
-              );
-            }
-          });
-        });
+        if (!_navigated) {
+          _navigated = true;
+          _checkSessionAndNavigate();
+        }
       }
     });
   }
 
+  Future<void> _checkSessionAndNavigate() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    await prefs.clear(); 
+    
+    final usuario = prefs.getString('usuario');
+
+    if (mounted) {
+      Widget proximaTela = (usuario != null && usuario.isNotEmpty) 
+          ? const BaseLayout() 
+          : const LoginPage();
+
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => proximaTela,
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 800),
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
-    _timer?.cancel();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF00448C), 
+      // Se precisar, mude essa cor para combinar com o fundo do seu vídeo
+      backgroundColor: const Color.fromARGB(255, 255, 255, 255), 
       body: Center(
-        child: AnimatedOpacity(
-          opacity: _isFadingOut ? 0.0 : 1.0, 
-          duration: const Duration(milliseconds: 600), 
-          curve: Curves.easeOut, 
-          child: Text(
-            _displayedText,
-            style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: 70.0,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -2.5,
-              height: 1.0,
-            ),
-          ),
-        ),
+        child: _controller.value.isInitialized
+            ? AspectRatio(
+                aspectRatio: _controller.value.aspectRatio,
+                child: VideoPlayer(_controller),
+              )
+            : const SizedBox.shrink(),
       ),
     );
   }

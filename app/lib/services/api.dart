@@ -1,42 +1,60 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 
 class Api {
-  // SE ESTIVER NO EMULADOR ANDROID: Mantenha 'http://10.0.2.2:8000/api'
-  // SE ESTIVER NO CELULAR FÍSICO (Via Cabo/Wi-Fi): Use o IP da sua máquina na rede
-  static const String baseUrl = 'http://172.16.1.76:8000/api';
-  static Map<String, String> get _headers => {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  };
+  // ATENÇÃO: Coloque aqui o IPv4 exato que está no ipconfig HOJE.
+  // Se o roteador reiniciou, o final do IP pode ter mudado!
+  static const String baseUrl = 'http://172.16.7.198:8000';
 
-  // Método POST genérico com tratamento de exceções móveis
+  // Evita a tela ficar "carregando para sempre" se o servidor não responder
+  static const Duration _timeout = Duration(seconds: 20);
+
+  static Map<String, String> get _headers => {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      };
+
+  static Uri _url(String endpoint) => Uri.parse('$baseUrl$endpoint');
+
+  static Future<http.Response> get(String endpoint) async {
+    try {
+      return await http.get(_url(endpoint), headers: _headers).timeout(_timeout);
+    } catch (e) {
+      print('EXCEÇÃO DE REDE [GET $endpoint]: $e');
+      rethrow;
+    }
+  }
+
   static Future<http.Response> post(String endpoint, Map<String, dynamic> body) async {
     try {
-      final url = Uri.parse('$baseUrl$endpoint');
-      final response = await http.post(
-        url,
-        headers: _headers,
-        body: jsonEncode(body),
-      );
-      return response;
+      return await http
+          .post(_url(endpoint), headers: _headers, body: jsonEncode(body))
+          .timeout(_timeout);
     } catch (e) {
       print('EXCEÇÃO DE REDE [POST $endpoint]: $e');
       rethrow;
     }
   }
 
-  // Método GET genérico com tratamento de exceções móveis
-  static Future<http.Response> get(String endpoint) async {
+  // NOVO: usado para editar registros
+  static Future<http.Response> put(String endpoint, Map<String, dynamic> body) async {
     try {
-      final url = Uri.parse('$baseUrl$endpoint');
-      final response = await http.get(
-        url,
-        headers: _headers,
-      );
-      return response;
+      return await http
+          .put(_url(endpoint), headers: _headers, body: jsonEncode(body))
+          .timeout(_timeout);
     } catch (e) {
-      print('EXCEÇÃO DE REDE [GET $endpoint]: $e');
+      print('EXCEÇÃO DE REDE [PUT $endpoint]: $e');
+      rethrow;
+    }
+  }
+
+  // NOVO: usado para excluir registros (ex.: DELETE /api/gsd/{id})
+  static Future<http.Response> delete(String endpoint) async {
+    try {
+      return await http.delete(_url(endpoint), headers: _headers).timeout(_timeout);
+    } catch (e) {
+      print('EXCEÇÃO DE REDE [DELETE $endpoint]: $e');
       rethrow;
     }
   }

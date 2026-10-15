@@ -25,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"], 
 )
 
-MONGO_URI = "mongodb+srv://josemariofbg1101_db_user:OZQjw09OwDJQnl7L@seguranca-db.8daonoq.mongodb.net/?appName=seguranca-db"
+MONGO_URI = "mongodb+srv://josegoularte_db_user:emD79iVach9NhHpZ@appseguranca.qz4enwn.mongodb.net/AppSeguranca"
 
 def iniciar_conexao_mongo():
     try:

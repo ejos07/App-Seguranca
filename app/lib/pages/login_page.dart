@@ -33,7 +33,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'\D'), '');
       
-      final response = await Api.post('/login', {
+      final response = await Api.post('/api/login', {
         'cpf': cpfLimpo,
         'senha': _senhaController.text
       });
@@ -94,7 +94,7 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'\D'), '');
-      final response = await Api.post('/atualizar_senha', {
+      final response = await Api.post('/api/atualizar_senha', {
         'cpf': cpfLimpo,
         'nova_senha': _novaSenhaController.text
       });

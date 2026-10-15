@@ -57,7 +57,7 @@ class _DtoPageState extends State<DtoPage> {
     });
 
     try {
-      final response = await Api.get('/dto/');
+      final response = await Api.get('/api/dto');
       
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));

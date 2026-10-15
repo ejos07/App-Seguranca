@@ -61,7 +61,7 @@ class _RelatosPageState extends State<RelatosPage> {
   Future<void> _carregarRelatos() async {
     setState(() => _isLoading = true);
     try {
-      final response = await Api.get('/relatos/');
+      final response = await Api.get('/api/relatos');
       
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));

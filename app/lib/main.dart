@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; 
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'pages/login_page.dart';
-import 'pages/base_layout.dart'; // Contém a BottomNavigationBar (Relatos + DTO)
+import 'pages/base_layout.dart'; // Início | Relatos | + | Perfil
 import 'pages/relatos_form_page.dart';
 import 'pages/dto_form_page.dart';
-import 'pages/splash.dart'; // <-- IMPORTANTE: Importe o arquivo da sua tela de splash
+import 'pages/gsd_page.dart';
+import 'pages/gsa_page.dart';
+import 'pages/gsp_page.dart';
+import 'pages/gestao_usuarios_page.dart';
+import 'pages/splash.dart';
 
 void main() {
   runApp(const AppSeguranca());
@@ -19,7 +23,7 @@ class AppSeguranca extends StatelessWidget {
     return MaterialApp(
       title: 'App Segurança',
       debugShowCheckedModeBanner: false,
-      
+
       // Configuração de localização (Padrão Brasileiro)
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -44,21 +48,25 @@ class AppSeguranca extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      
-      // O aplicativo inicia SEMPRE na SplashScreen agora
+
+      // O aplicativo inicia SEMPRE na SplashScreen
       home: const SplashScreen(),
-      
+
       routes: {
         '/login': (context) => const LoginPage(),
         '/home': (context) => const BaseLayout(),
-        '/novo_relato': (context) => RelatosFormPage(),
+        '/novo_relato': (context) => const RelatosFormPage(),
         '/novo_dto': (context) => const DtoFormPage(),
+        '/gsd': (context) => const GsdPage(),
+        '/gsa': (context) => const GsaPage(),
+        '/gsp': (context) => const GspPage(),
+        '/usuarios': (context) => const GestaoUsuariosPage(),
       },
     );
   }
 }
 
-/// Guarda de Rota: Verifica o armazenamento local antes de renderizar a tela
+/// Guarda de Rota: verifica o login salvo antes de abrir a tela
 class AuthCheck extends StatefulWidget {
   const AuthCheck({super.key});
 
@@ -75,9 +83,9 @@ class _AuthCheckState extends State<AuthCheck> {
 
   Future<void> _verificarSessao() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // 1. FORÇA A LIMPEZA TOTAL DO DISCO (Destrói o Auto Backup do Android)
-    await prefs.clear(); 
+
+    // REMOVIDO: await prefs.clear();
+    // Ele apagava o login salvo e obrigava a logar toda vez que esta tela fosse usada.
 
     final usuario = prefs.getString('usuario');
 
@@ -92,7 +100,6 @@ class _AuthCheckState extends State<AuthCheck> {
 
   @override
   Widget build(BuildContext context) {
-    // Tela de carregamento nativa exibida milissegundos antes da decisão de rota
     return const Scaffold(
       body: Center(
         child: CircularProgressIndicator(),
