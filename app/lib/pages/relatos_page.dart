@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../widgets/comum.dart';
+import 'relatos_form_page.dart';
 
 // =====================================================
 // Relatos: Consultar + Dashboard
@@ -87,66 +88,82 @@ class _RelatosPageState extends State<RelatosPage> {
     return lista;
   }
 
-  Future<void> _novoRelato() async {
-    await Navigator.pushNamed(context, '/novo_relato');
-    if (mounted) _carregarRelatos();
+  // Formulário embutido na aba "Novo Relato": nova chave = formulário limpo
+  Key _chaveForm = UniqueKey();
+  BuildContext? _ctxAbas;
+
+  void _aposSalvar() {
+    setState(() => _chaveForm = UniqueKey());
+    _carregarRelatos();
+    final c = _ctxAbas;
+    if (c != null && c.mounted) DefaultTabController.of(c).animateTo(1); // vai para a Consulta
+  }
+
+  Widget _filtros() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      BarraFiltros(
+        hint: 'Buscar protocolo, pessoa, área...',
+        onBusca: (v) => setState(() => _busca = v),
+        filtros: [
+          FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
+        ],
+      ),
+      Container(
+        color: AppCores.superficie,
+        padding: const EdgeInsets.fromLTRB(AppEspaco.m, 0, AppEspaco.m, AppEspaco.s),
+        child: FiltroOpcoes(
+          opcoes: kTiposRelato,
+          valor: _tipo,
+          onChanged: (v) => setState(() => _tipo = v),
+        ),
+      ),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
     final filtrados = _relatosFiltrados;
+
+    // Mesmo padrão de GSD / GSA / GSP: Novo | Consulta | Dashboard
+    final abas = <Tab>[
+      const Tab(icon: Icon(Icons.add_circle_outline), text: 'Novo Relato'),
+      Tab(icon: const Icon(Icons.search), text: _veTudo ? 'Consulta' : 'Meus Relatos'),
+      const Tab(icon: Icon(Icons.pie_chart_outline), text: 'Dashboard'),
+    ];
+
     return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Relatos'),
-          actions: [
-            IconButton(
-              tooltip: 'Atualizar',
-              icon: const Icon(Icons.refresh),
-              onPressed: _isLoading ? null : _carregarRelatos,
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.view_list_rounded), text: 'Consultar'),
-              Tab(icon: Icon(Icons.insights_rounded), text: 'Dashboard'),
+      length: abas.length,
+      child: Builder(builder: (ctxAbas) {
+        _ctxAbas = ctxAbas;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Relatos'),
+            actions: [
+              IconButton(
+                tooltip: 'Atualizar',
+                icon: const Icon(Icons.refresh),
+                onPressed: _isLoading ? null : _carregarRelatos,
+              ),
             ],
+            bottom: TabBar(tabs: abas),
           ),
-        ),
-        body: Column(children: [
-          BarraFiltros(
-            hint: 'Buscar protocolo, pessoa, área...',
-            onBusca: (v) => setState(() => _busca = v),
-            filtros: [
-              FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
-            ],
-          ),
-          Container(
-            color: AppCores.superficie,
-            padding: const EdgeInsets.fromLTRB(AppEspaco.m, 0, AppEspaco.m, AppEspaco.s),
-            child: FiltroOpcoes(
-              opcoes: kTiposRelato,
-              valor: _tipo,
-              onChanged: (v) => setState(() => _tipo = v),
-            ),
-          ),
-          Expanded(
-            child: TabBarView(children: [
-              _buildAbaLista(filtrados),
-              _isLoading && _relatosGerais.isEmpty
-                  ? const ListaCarregando(itens: 3)
-                  : _RelatosDashboardView(relatos: filtrados),
+          body: TabBarView(children: [
+            RelatosFormPage(key: _chaveForm, embutido: true, onSalvo: _aposSalvar),
+            Column(children: [
+              _filtros(),
+              Expanded(child: _buildAbaLista(filtrados)),
             ]),
-          ),
-        ]),
-        floatingActionButton: FloatingActionButton.extended(
-          heroTag: 'fab_novo_relato',
-          onPressed: _novoRelato,
-          icon: const Icon(Icons.add),
-          label: const Text('Novo Relato', style: TextStyle(fontWeight: FontWeight.w700)),
-        ),
-      ),
+            Column(children: [
+              _filtros(),
+              Expanded(
+                child: _isLoading && _relatosGerais.isEmpty
+                    ? const ListaCarregando(itens: 3)
+                    : _RelatosDashboardView(relatos: filtrados),
+              ),
+            ]),
+          ]),
+        );
+      }),
     );
   }
 

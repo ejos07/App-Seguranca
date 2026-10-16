@@ -132,7 +132,13 @@ const String kSeguro = 'Seguro (Reforço Positivo)';
 const String kInseguro = 'INSEGURO (CORREÇÃO NECESSÁRIA)';
 
 class DtoFormPage extends StatefulWidget {
-  const DtoFormPage({super.key});
+  /// embutido = true: aparece como aba "Nova DTO" dentro da tela DTO (sem AppBar)
+  final bool embutido;
+
+  /// Chamado depois de salvar quando está embutido (a tela pai volta para a Consulta)
+  final VoidCallback? onSalvo;
+
+  const DtoFormPage({super.key, this.embutido = false, this.onSalvo});
 
   @override
   State<DtoFormPage> createState() => _DtoFormPageState();
@@ -230,7 +236,7 @@ class _DtoFormPageState extends State<DtoFormPage> {
 
     setState(() => _isLoadingPerfil = false);
 
-    if (!_podeCriarDTO && mounted) {
+    if (!_podeCriarDTO && mounted && !widget.embutido) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Sem permissão para criar DTOs.')),
       );
@@ -442,7 +448,11 @@ class _DtoFormPageState extends State<DtoFormPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('DTO registrada com sucesso!$protocolo'), backgroundColor: Colors.green),
         );
-        Navigator.pop(context, true);
+        if (widget.embutido) {
+          widget.onSalvo?.call(); // a tela pai recria o formulário limpo e abre a Consulta
+        } else {
+          Navigator.pop(context, true);
+        }
       } else {
         _mostrarErro(_resumirErro(response.statusCode, corpo));
       }
@@ -496,7 +506,7 @@ class _DtoFormPageState extends State<DtoFormPage> {
     final cargo = _cargoDe(_relatadoSelecionado);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Nova DTO')),
+      appBar: widget.embutido ? null : AppBar(title: const Text('Nova DTO')),
       bottomNavigationBar: BarraAcaoInferior(
         rotulo: 'Salvar DTO',
         icone: Icons.send_rounded,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../widgets/comum.dart';
+import 'dto_form_page.dart';
 
 // =====================================================
 // DTO: Consultar + Dashboard
@@ -90,71 +91,86 @@ class _DtoPageState extends State<DtoPage> {
     return lista;
   }
 
-  Future<void> _novaDto() async {
-    await Navigator.pushNamed(context, '/novo_dto');
-    if (mounted) _carregarDTOs();
+  // Formulário embutido na aba "Nova DTO": nova chave = formulário limpo
+  Key _chaveForm = UniqueKey();
+  BuildContext? _ctxAbas;
+
+  void _aposSalvar() {
+    setState(() => _chaveForm = UniqueKey());
+    _carregarDTOs();
+    final c = _ctxAbas;
+    if (c != null && c.mounted) DefaultTabController.of(c).animateTo(1); // vai para a Consulta
+  }
+
+  Widget _filtros() {
+    return BarraFiltros(
+      hint: 'Buscar observador, avaliado ou protocolo...',
+      onBusca: (v) => setState(() => _busca = v),
+      filtros: [
+        FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
+        FiltroMenu(
+          rotulo: 'Comportamento',
+          valor: _comportamento,
+          opcoes: const ['Seguro', 'Inseguro'],
+          onChanged: (v) => setState(() => _comportamento = v),
+        ),
+        FiltroMenu(
+          rotulo: 'Tipo',
+          valor: _tipoDto,
+          opcoes: _tiposDisponiveis,
+          onChanged: (v) => setState(() => _tipoDto = v),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final filtrados = _dtosFiltrados;
+    final podeCriar = _sessao.podeCriarDTO;
+
+    // Mesmo padrão de GSD / GSA / GSP: Nova | Consulta | Dashboard
+    // (a aba "Nova DTO" só aparece para quem pode criar)
+    final abas = <Tab>[
+      if (podeCriar) const Tab(icon: Icon(Icons.add_circle_outline), text: 'Nova DTO'),
+      Tab(icon: const Icon(Icons.search), text: _veTudo ? 'Consulta' : 'Minhas DTOs'),
+      const Tab(icon: Icon(Icons.pie_chart_outline), text: 'Dashboard'),
+    ];
+
     return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('DTO'),
-          actions: [
-            IconButton(
-              tooltip: 'Atualizar',
-              icon: const Icon(Icons.refresh),
-              onPressed: _isLoading ? null : _carregarDTOs,
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.view_list_rounded), text: 'Consultar'),
-              Tab(icon: Icon(Icons.insights_rounded), text: 'Dashboard'),
-            ],
-          ),
-        ),
-        body: Column(children: [
-          BarraFiltros(
-            hint: 'Buscar observador, avaliado ou protocolo...',
-            onBusca: (v) => setState(() => _busca = v),
-            filtros: [
-              FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
-              FiltroMenu(
-                rotulo: 'Comportamento',
-                valor: _comportamento,
-                opcoes: const ['Seguro', 'Inseguro'],
-                onChanged: (v) => setState(() => _comportamento = v),
-              ),
-              FiltroMenu(
-                rotulo: 'Tipo',
-                valor: _tipoDto,
-                opcoes: _tiposDisponiveis,
-                onChanged: (v) => setState(() => _tipoDto = v),
+      key: ValueKey('abas-dto-${abas.length}'),
+      length: abas.length,
+      child: Builder(builder: (ctxAbas) {
+        _ctxAbas = ctxAbas;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('DTO'),
+            actions: [
+              IconButton(
+                tooltip: 'Atualizar',
+                icon: const Icon(Icons.refresh),
+                onPressed: _isLoading ? null : _carregarDTOs,
               ),
             ],
+            bottom: TabBar(tabs: abas),
           ),
-          Expanded(
-            child: TabBarView(children: [
-              _buildAbaLista(filtrados),
-              _isLoading && _dtosGerais.isEmpty
-                  ? const ListaCarregando(itens: 3)
-                  : _DtoDashboardView(dtos: filtrados),
+          body: TabBarView(children: [
+            if (podeCriar) DtoFormPage(key: _chaveForm, embutido: true, onSalvo: _aposSalvar),
+            Column(children: [
+              _filtros(),
+              Expanded(child: _buildAbaLista(filtrados)),
             ]),
-          ),
-        ]),
-        floatingActionButton: _sessao.podeCriarDTO
-            ? FloatingActionButton.extended(
-                heroTag: 'fab_nova_dto',
-                onPressed: _novaDto,
-                icon: const Icon(Icons.add),
-                label: const Text('Nova DTO', style: TextStyle(fontWeight: FontWeight.w700)),
-              )
-            : null,
-      ),
+            Column(children: [
+              _filtros(),
+              Expanded(
+                child: _isLoading && _dtosGerais.isEmpty
+                    ? const ListaCarregando(itens: 3)
+                    : _DtoDashboardView(dtos: filtrados),
+              ),
+            ]),
+          ]),
+        );
+      }),
     );
   }
 

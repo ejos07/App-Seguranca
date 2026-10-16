@@ -44,7 +44,13 @@ String grupoClass(dynamic c) {
 }
 
 class RelatosFormPage extends StatefulWidget {
-  const RelatosFormPage({super.key});
+  /// embutido = true: aparece como aba "Novo Relato" dentro da tela Relatos (sem AppBar)
+  final bool embutido;
+
+  /// Chamado depois de salvar quando está embutido (a tela pai volta para a Consulta)
+  final VoidCallback? onSalvo;
+
+  const RelatosFormPage({super.key, this.embutido = false, this.onSalvo});
 
   @override
   State<RelatosFormPage> createState() => _RelatosFormPageState();
@@ -291,7 +297,11 @@ class _RelatosFormPageState extends State<RelatosFormPage> {
         } catch (_) {}
         _aviso('Relato registrado com sucesso!$protocolo', cor: Colors.green);
         _limparFormulario();
-        Navigator.pop(context, true);
+        if (widget.embutido) {
+          widget.onSalvo?.call();
+        } else {
+          Navigator.pop(context, true);
+        }
       } else {
         _aviso(_resumirErro(response.statusCode, corpo));
       }
@@ -338,7 +348,7 @@ class _RelatosFormPageState extends State<RelatosFormPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Novo Relato')),
+      appBar: widget.embutido ? null : AppBar(title: const Text('Novo Relato')),
       bottomNavigationBar: BarraAcaoInferior(
         rotulo: 'Salvar Relato',
         icone: Icons.send_rounded,
