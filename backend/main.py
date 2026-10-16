@@ -13,6 +13,9 @@ import pandas as pd
 
 app = FastAPI()
 
+from rota_perfil_fotos import router as router_perfil
+app.include_router(router_perfil)
+
 @app.get("/")
 def read_root():
     return {"message": "API de Segurança está rodando corretamente!"}
@@ -24,6 +27,26 @@ app.add_middleware(
     allow_methods=["*"], 
     allow_headers=["*"], 
 )
+
+
+
+# =====================================================================
+# FOTOS DE PERFIL PARA O APP  (colar no backend/main.py)
+# Coloque logo DEPOIS da linha  app = FastAPI(...)  e do bloco de CORS.
+# Serve:  http://<servidor>:8000/fotos_perfil/NOME DO COLABORADOR.jpg
+# =====================================================================
+import os
+from fastapi.staticfiles import StaticFiles
+
+# Pode trocar pelo .env:  PASTA_FOTOS=B:\App_Seguranca2.0\frontend\public\fotos_perfil
+PASTA_FOTOS = os.getenv("PASTA_FOTOS", r"B:\App_Seguranca2.0\frontend\public\fotos_perfil")
+
+if os.path.isdir(PASTA_FOTOS):
+    app.mount("/fotos_perfil", StaticFiles(directory=PASTA_FOTOS), name="fotos_perfil")
+    print(f"[FOTOS] Servindo fotos de: {PASTA_FOTOS}")
+else:
+    print(f"[FOTOS][AVISO] Pasta não encontrada: {PASTA_FOTOS} -> o app vai mostrar as iniciais")
+
 
 MONGO_URI = "mongodb+srv://josegoularte_db_user:emD79iVach9NhHpZ@appseguranca.qz4enwn.mongodb.net/AppSeguranca"
 

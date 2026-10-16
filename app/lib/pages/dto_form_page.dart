@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api.dart';
+import '../widgets/comum.dart';
 
 // =====================================================
 // Normalização (igual ao normalizarChave/padronizar do DTO.tsx):
@@ -479,6 +480,8 @@ class _DtoFormPageState extends State<DtoFormPage> {
 
     final (dtosPermitidas, avisoDto) = _obterDTOsPermitidas();
     final perguntasAtuais = _obterPerguntasDoTipo();
+    final respondidas = perguntasAtuais.where((p) => _respostas.containsKey(p)).length;
+    final nok = perguntasAtuais.where((p) => _respostas[p] == 'NOK').length;
 
     String hintTipo;
     if (_isLoadingInteligencia) {
@@ -490,256 +493,213 @@ class _DtoFormPageState extends State<DtoFormPage> {
     } else {
       hintTipo = 'Selecione o tipo...';
     }
+    final cargo = _cargoDe(_relatadoSelecionado);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Registrar Novo DTO')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: AppBar(title: const Text('Nova DTO')),
+      bottomNavigationBar: BarraAcaoInferior(
+        rotulo: 'Salvar DTO',
+        icone: Icons.send_rounded,
+        carregando: _salvando,
+        onPressed: _salvarDTO,
+        topo: perguntasAtuais.isEmpty
+            ? null
+            : ProgressoChecklist(respondidas: respondidas, total: perguntasAtuais.length, ruins: nok),
+      ),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: ListView(
+          padding: const EdgeInsets.all(AppEspaco.l),
           children: [
-            // Data + UNB
-            InkWell(
-              onTap: _escolherData,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Data',
-                  border: OutlineInputBorder(),
-                  suffixIcon: Icon(Icons.calendar_month),
-                ),
-                child: Text(_dataBr(_dataDto), style: const TextStyle(fontSize: 16)),
-              ),
+            // 1. DADOS GERAIS
+            SecaoForm(
+              titulo: 'Dados gerais',
+              icone: Icons.event_note_outlined,
+              child: Column(children: [
+                Row(children: [
+                  Expanded(
+                    child: CampoData(label: 'Data', valor: _dataDto, onChanged: (d) => setState(() => _dataDto = d)),
+                  ),
+                  const SizedBox(width: AppEspaco.m),
+                  Expanded(
+                    child: CampoDropdown(
+                      label: 'UNB*',
+                      opcoes: _listaUnb,
+                      valor: _unbSelecionada,
+                      onChanged: (val) {
+                        if (val != null && val != _unbSelecionada) {
+                          setState(() => _unbSelecionada = val);
+                          _carregarEquipe(val);
+                        }
+                      },
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: AppEspaco.m),
+                CampoSomenteLeitura(label: 'Executor (você)', valor: _nomeUsuario, icone: Icons.person_outline),
+              ]),
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'UNB*', border: OutlineInputBorder()),
-              value: _unbSelecionada,
-              items: _listaUnb.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-              onChanged: (val) {
-                if (val != null && val != _unbSelecionada) {
-                  setState(() => _unbSelecionada = val);
-                  _carregarEquipe(val);
-                }
-              },
-            ),
-            const SizedBox(height: 16),
 
-            // Executor (você)
-            InputDecorator(
-              decoration: InputDecoration(
-                labelText: 'EXECUTOR (Você)*',
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.grey.shade100,
-              ),
-              child: Text(_nomeUsuario, style: TextStyle(color: Colors.grey.shade700)),
-            ),
-            const SizedBox(height: 16),
-
-            // Colaborador observado
-            Autocomplete<String>(
-              key: _autocompleteKey,
-              optionsBuilder: (TextEditingValue v) {
-                final opcoes = _equipe.keys.toList()..sort();
-                if (v.text.isEmpty) return opcoes.take(15);
-                final termo = _tirarAcento(v.text).toLowerCase();
-                return opcoes.where((nome) => _tirarAcento(nome).toLowerCase().contains(termo));
-              },
-              onSelected: (String selecao) {
-                setState(() {
-                  _relatadoSelecionado = selecao;
-                  _tipoDtoSelecionado = null;
-                  _respostas.clear();
-                });
-              },
-              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                return TextFormField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  onChanged: (texto) {
-                    final t = texto.trim();
-                    final achado = _equipe.containsKey(t) ? t : null;
-                    if (achado != _relatadoSelecionado) {
+            // 2. COLABORADOR
+            SecaoForm(
+              titulo: 'Colaborador observado',
+              icone: Icons.person_search_outlined,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                CampoBuscaPessoa(
+                  key: _autocompleteKey,
+                  label: 'Colaborador observado*',
+                  opcoes: _equipe.keys.toList()..sort(),
+                  carregando: _isLoadingEquipe,
+                  onChanged: (v) {
+                    if (v != _relatadoSelecionado) {
                       setState(() {
-                        _relatadoSelecionado = achado;
+                        _relatadoSelecionado = v;
                         _tipoDtoSelecionado = null;
                         _respostas.clear();
                       });
                     }
                   },
-                  decoration: InputDecoration(
-                    labelText: 'COLABORADOR OBSERVADO*',
-                    hintText: _isLoadingEquipe
-                        ? 'Carregando equipe...'
-                        : (_equipe.isEmpty ? 'Nenhum colaborador nesta UNB' : 'Digite o nome...'),
-                    border: const OutlineInputBorder(),
-                    suffixIcon: _isLoadingEquipe
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                          )
-                        : const Icon(Icons.search),
-                  ),
-                );
-              },
-            ),
-            if (_relatadoSelecionado != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Text(
-                  'Cargo identificado: ${_cargoDe(_relatadoSelecionado).isEmpty ? "N/A" : _cargoDe(_relatadoSelecionado)}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
                 ),
-              ),
-
-            const Divider(height: 32),
-
-            // Tipo de DTO
-            DropdownButtonFormField<String>(
-              key: ValueKey('tipo-$_relatadoSelecionado'),
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'TIPO DE DTO A SER APLICADA*', border: OutlineInputBorder()),
-              value: dtosPermitidas.contains(_tipoDtoSelecionado) ? _tipoDtoSelecionado : null,
-              hint: Text(hintTipo, overflow: TextOverflow.ellipsis),
-              disabledHint: Text(hintTipo, overflow: TextOverflow.ellipsis),
-              items: dtosPermitidas
-                  .map((dto) => DropdownMenuItem(value: dto, child: Text(dto, overflow: TextOverflow.ellipsis)))
-                  .toList(),
-              onChanged: dtosPermitidas.isEmpty
-                  ? null
-                  : (val) => setState(() {
-                        _tipoDtoSelecionado = val;
-                        _respostas.clear();
-                      }),
-            ),
-            if (avisoDto != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('⚠ $avisoDto', style: TextStyle(color: Colors.orange.shade800, fontSize: 12)),
-              ),
-            if (_erroInteligencia.isNotEmpty)
-              Row(
-                children: [
-                  Expanded(child: Text(_erroInteligencia, style: const TextStyle(color: Colors.red, fontSize: 12))),
-                  TextButton.icon(
-                    onPressed: _carregarInteligencia,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Tentar novamente'),
+                if (_relatadoSelecionado != null) ...[
+                  const SizedBox(height: AppEspaco.m),
+                  Container(
+                    padding: const EdgeInsets.all(AppEspaco.m),
+                    decoration: BoxDecoration(
+                      color: AppCores.superficieSuave,
+                      borderRadius: BorderRadius.circular(AppRaio.m),
+                      border: Border.all(color: AppCores.borda),
+                    ),
+                    child: Row(children: [
+                      FotoPerfil(nome: _relatadoSelecionado!, raio: 22),
+                      const SizedBox(width: AppEspaco.m),
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(_relatadoSelecionado!,
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                          const SizedBox(height: 2),
+                          Text(cargo.isEmpty ? 'Cargo não informado' : cargo, style: AppTexto.legenda),
+                        ]),
+                      ),
+                    ]),
                   ),
                 ],
-              ),
+              ]),
+            ),
+
+            // 3. TIPO DE DTO
+            SecaoForm(
+              titulo: 'Tipo de DTO',
+              icone: Icons.fact_check_outlined,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                DropdownButtonFormField<String>(
+                  key: ValueKey('tipo-$_relatadoSelecionado'),
+                  isExpanded: true,
+                  borderRadius: BorderRadius.circular(AppRaio.m),
+                  icon: const Icon(Icons.expand_more),
+                  decoration: decoracao('Tipo de DTO a ser aplicada*', prefixo: Icons.assignment_outlined),
+                  value: dtosPermitidas.contains(_tipoDtoSelecionado) ? _tipoDtoSelecionado : null,
+                  hint: Text(hintTipo, overflow: TextOverflow.ellipsis),
+                  disabledHint: Text(hintTipo, overflow: TextOverflow.ellipsis),
+                  items: dtosPermitidas
+                      .map((dto) => DropdownMenuItem(value: dto, child: Text(dto, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: dtosPermitidas.isEmpty
+                      ? null
+                      : (val) => setState(() {
+                            _tipoDtoSelecionado = val;
+                            _respostas.clear();
+                          }),
+                ),
+                if (avisoDto != null) ...[
+                  const SizedBox(height: AppEspaco.s),
+                  FaixaInfo(avisoDto, icone: Icons.info_outline, cor: AppCores.alerta),
+                ],
+                if (_erroInteligencia.isNotEmpty) ...[
+                  const SizedBox(height: AppEspaco.s),
+                  Row(children: [
+                    Expanded(
+                        child: Text(_erroInteligencia, style: const TextStyle(color: AppCores.perigo, fontSize: 12))),
+                    TextButton.icon(
+                      onPressed: _carregarInteligencia,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Tentar novamente'),
+                    ),
+                  ]),
+                ],
+              ]),
+            ),
 
             if (_tipoDtoSelecionado != null) ...[
-              const SizedBox(height: 24),
-              const Text('Tipo de Comportamento Geral', style: TextStyle(fontWeight: FontWeight.bold)),
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(kSeguro),
-                value: kSeguro,
-                groupValue: _tipoComportamento,
-                onChanged: (val) => setState(() => _tipoComportamento = val ?? _tipoComportamento),
-              ),
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(kInseguro),
-                value: kInseguro,
-                groupValue: _tipoComportamento,
-                onChanged: (val) => setState(() => _tipoComportamento = val ?? _tipoComportamento),
-              ),
-
-              // Checklist
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.symmetric(vertical: 16),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Perguntas: $_tipoDtoSelecionado', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 12),
-                    if (perguntasAtuais.isEmpty)
-                      const Text('Este tipo de DTO não tem perguntas cadastradas.', style: TextStyle(color: Colors.grey)),
-                    ...perguntasAtuais.map((pergunta) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(pergunta, style: const TextStyle(fontWeight: FontWeight.w500)),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: RadioListTile<String>(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text('OK'),
-                                    value: 'OK',
-                                    groupValue: _respostas[pergunta],
-                                    onChanged: (val) => setState(() => _respostas[pergunta] = val ?? 'OK'),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: RadioListTile<String>(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text('NOK'),
-                                    value: 'NOK',
-                                    groupValue: _respostas[pergunta],
-                                    onChanged: (val) => setState(() => _respostas[pergunta] = val ?? 'NOK'),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Divider(height: 1),
-                          ],
-                        ),
-                      );
-                    }),
+              // 4. COMPORTAMENTO
+              SecaoForm(
+                titulo: 'Comportamento geral',
+                icone: Icons.psychology_alt_outlined,
+                child: SeletorCartoes<String>(
+                  valor: _tipoComportamento,
+                  onChanged: (v) => setState(() => _tipoComportamento = v),
+                  opcoes: const [
+                    OpcaoCartao(
+                      valor: kSeguro,
+                      titulo: 'Seguro',
+                      subtitulo: 'Reforço positivo',
+                      icone: Icons.verified_outlined,
+                      cor: AppCores.sucesso,
+                    ),
+                    OpcaoCartao(
+                      valor: kInseguro,
+                      titulo: 'Inseguro',
+                      subtitulo: 'Correção necessária',
+                      icone: Icons.warning_amber_rounded,
+                      cor: AppCores.perigo,
+                    ),
                   ],
                 ),
               ),
 
-              TextFormField(
-                controller: _descricaoCtrl,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Descrição / Observações Adicionais',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
+              // 5. CHECKLIST
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppEspaco.xs, AppEspaco.xs, AppEspaco.xs, AppEspaco.m),
+                child: Text('CHECKLIST • ${_tipoDtoSelecionado!.toUpperCase()}', style: AppTexto.rotulo),
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _acaoCtrl,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Ação Tomada / Recomendação',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
+              if (perguntasAtuais.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: AppEspaco.l),
+                  child: FaixaInfo('Este tipo de DTO não tem perguntas cadastradas.'),
                 ),
+              ...List.generate(perguntasAtuais.length, (i) {
+                final p = perguntasAtuais.elementAt(i);
+                return PerguntaBinaria(
+                  numero: i + 1,
+                  pergunta: p,
+                  valor: _respostas[p],
+                  onChanged: (v) => setState(() => _respostas[p] = v),
+                );
+              }),
+              const SizedBox(height: AppEspaco.s),
+
+              // 6. OBSERVAÇÕES
+              SecaoForm(
+                titulo: 'Observações',
+                icone: Icons.notes_outlined,
+                child: Column(children: [
+                  TextFormField(
+                    controller: _descricaoCtrl,
+                    minLines: 3,
+                    maxLines: 6,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: decoracao('Descrição / observações adicionais'),
+                  ),
+                  const SizedBox(height: AppEspaco.m),
+                  TextFormField(
+                    controller: _acaoCtrl,
+                    minLines: 3,
+                    maxLines: 6,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: decoracao('Ação tomada / recomendação'),
+                  ),
+                ]),
               ),
             ],
-
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _salvando ? null : _salvarDTO,
-                icon: _salvando
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.save),
-                label: Text(_salvando ? 'Salvando...' : 'Salvar DTO', style: const TextStyle(fontSize: 16)),
-              ),
-            ),
-            const SizedBox(height: 32),
           ],
         ),
       ),

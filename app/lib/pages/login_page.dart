@@ -1,9 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http; // Adicione no pubspec: flutter pub add http
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../services/api.dart';
+import '../theme/app_theme.dart';
 
+// =====================================================
+// Login (mesma lógica de antes: /api/login e /api/atualizar_senha)
+// =====================================================
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -12,73 +16,78 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // Equivalente ao useState('') para os inputs
   final TextEditingController _cpfController = TextEditingController();
   final TextEditingController _senhaController = TextEditingController();
   final TextEditingController _novaSenhaController = TextEditingController();
   final TextEditingController _confirmaSenhaController = TextEditingController();
+  final FocusNode _focoSenha = FocusNode();
 
-  // Estados de controle da interface
+  // Aceita CPF com ou sem pontuação; o envio usa só os números
+  final MaskTextInputFormatter _mascaraCpf =
+      MaskTextInputFormatter(mask: '###.###.###-##', filter: {'#': RegExp(r'[0-9]')});
+
   bool _modoTrocaSenha = false;
+  bool _mostrarSenha = false;
+  bool _mostrarNovaSenha = false;
   String _erro = '';
   bool _isLoading = false;
 
+  String get _cpfLimpo => _cpfController.text.replaceAll(RegExp(r'\D'), '');
+
+  Future<void> _salvarUsuarioEEntrar(dynamic usuario) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('usuario', jsonEncode(usuario));
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/home');
+  }
+
+  String _lerDetalhe(String corpo, String padrao) {
+    try {
+      final j = jsonDecode(corpo);
+      if (j is Map && j['detail'] != null) return j['detail'].toString();
+    } catch (_) {}
+    return padrao;
+  }
 
   Future<void> _handleLogin() async {
+    FocusScope.of(context).unfocus();
+    if (_cpfLimpo.isEmpty || _senhaController.text.isEmpty) {
+      setState(() => _erro = 'Informe o CPF e a senha.');
+      return;
+    }
     setState(() {
       _erro = '';
       _isLoading = true;
     });
 
     try {
-      final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'\D'), '');
-      
-      final response = await Api.post('/api/login', {
-        'cpf': cpfLimpo,
-        'senha': _senhaController.text
-      });
+      final response = await Api.post('/api/login', {'cpf': _cpfLimpo, 'senha': _senhaController.text});
+      // Não imprime o corpo: ele contém dados pessoais do usuário
+      debugPrint('LOGIN -> status ${response.statusCode}');
+      final corpo = utf8.decode(response.bodyBytes);
 
-      // IMPRESSÃO DE DEBUG: Mostra o que o FastAPI realmente respondeu
-      print('=== RESPOSTA DO SERVIDOR (LOGIN) ===');
-      print('Status: ${response.statusCode}');
-      print('Body: ${response.body}');
-      print('====================================');
-
-      // Proteção arquitetural Mobile: Só tenta converter JSON se o status for de sucesso (2xx)
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body);
-
+        final data = jsonDecode(corpo);
         if (data['status'] == 'sucesso') {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('usuario', jsonEncode(data['usuario']));
-          
-          if (!mounted) return;
-          // CORREÇÃO: A rota configurada no main.dart agora é '/home'
-          Navigator.pushReplacementNamed(context, '/home');
+          await _salvarUsuarioEEntrar(data['usuario']);
         } else if (data['status'] == 'precisa_trocar_senha') {
           setState(() => _modoTrocaSenha = true);
         } else {
-          setState(() => _erro = data['detail'] ?? 'Erro ao efetuar login.');
+          setState(() => _erro = (data['detail'] ?? 'Erro ao efetuar login.').toString());
         }
       } else {
-        // Se o servidor retornar 404, 422, etc., tenta ler o erro do FastAPI
-        try {
-          final errorData = jsonDecode(response.body);
-          setState(() => _erro = errorData['detail'] ?? 'Credenciais inválidas ou erro no servidor.');
-        } catch (_) {
-          setState(() => _erro = 'Erro no servidor (Status: ${response.statusCode}).');
-        }
+        setState(() => _erro = _lerDetalhe(corpo, 'CPF ou senha inválidos (${response.statusCode}).'));
       }
     } catch (e) {
-      // Agora isto só captura erros reais (ex: código quebrado na UI) e não erros de rede silenciados
-      print('ERRO INTERNO NO LOGIN: $e');
-      setState(() => _erro = 'Falha interna na aplicação.');
+      debugPrint('ERRO NO LOGIN: $e');
+      if (mounted) setState(() => _erro = 'Não foi possível conectar ao servidor. Verifique sua conexão.');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _handleAtualizarSenha() async {
+    FocusScope.of(context).unfocus();
     setState(() => _erro = '');
 
     if (_novaSenhaController.text.length < 4) {
@@ -91,133 +100,158 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     setState(() => _isLoading = true);
-
     try {
-      final cpfLimpo = _cpfController.text.replaceAll(RegExp(r'\D'), '');
-      final response = await Api.post('/api/atualizar_senha', {
-        'cpf': cpfLimpo,
-        'nova_senha': _novaSenhaController.text
-      });
-
-      print('=== RESPOSTA DO SERVIDOR (TROCA SENHA) ===');
-      print('Status: ${response.statusCode}');
-      print('Body: ${response.body}');
+      final response =
+          await Api.post('/api/atualizar_senha', {'cpf': _cpfLimpo, 'nova_senha': _novaSenhaController.text});
+      debugPrint('TROCA SENHA -> status ${response.statusCode}');
+      final corpo = utf8.decode(response.bodyBytes);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body);
-
+        final data = jsonDecode(corpo);
         if (data['status'] == 'sucesso') {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('usuario', jsonEncode(data['usuario']));
-          
-          if (!mounted) return;
-          // CORREÇÃO: A rota configurada no main.dart agora é '/home'
-          Navigator.pushReplacementNamed(context, '/home');
+          await _salvarUsuarioEEntrar(data['usuario']);
         } else {
-          setState(() => _erro = data['detail'] ?? 'Erro ao atualizar a senha.');
+          setState(() => _erro = (data['detail'] ?? 'Erro ao atualizar a senha.').toString());
         }
       } else {
-        setState(() => _erro = 'Erro no servidor (Status: ${response.statusCode}).');
+        setState(() => _erro = _lerDetalhe(corpo, 'Erro no servidor (${response.statusCode}).'));
       }
     } catch (e) {
-      print('ERRO INTERNO NA TROCA DE SENHA: $e');
-      setState(() => _erro = 'Falha interna na aplicação.');
+      debugPrint('ERRO NA TROCA DE SENHA: $e');
+      if (mounted) setState(() => _erro = 'Não foi possível conectar ao servidor. Verifique sua conexão.');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   void dispose() {
-    // Limpeza de memória dos controllers (Boas práticas Mobile)
     _cpfController.dispose();
     _senhaController.dispose();
     _novaSenhaController.dispose();
     _confirmaSenhaController.dispose();
+    _focoSenha.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final altura = MediaQuery.of(context).size.height;
     return Scaffold(
-      // SafeArea protege a UI do entalhe da câmera e barra de status do celular
-      body: SafeArea(
-        child: Center(
-          // SingleChildScrollView evita que o teclado virtual esmague o layout
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Container(
-              padding: const EdgeInsets.all(24.0),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+      backgroundColor: AppCores.fundo,
+      body: SingleChildScrollView(
+        child: Column(children: [
+          // ---------- Topo com a marca ----------
+          Container(
+            width: double.infinity,
+            height: altura * 0.36,
+            decoration: const BoxDecoration(
+              gradient: AppCores.gradienteMarca,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
+            ),
+            child: SafeArea(
+              bottom: false,
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(AppRaio.xl),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 16, offset: const Offset(0, 6))],
                   ),
-                ],
-              ),
-              child: _modoTrocaSenha ? _buildTrocaSenhaForm() : _buildLoginForm(),
+                  child: Image.asset(
+                    'assets/logo.png',
+                    height: 56,
+                    errorBuilder: (_, __, ___) =>
+                        const Icon(Icons.health_and_safety, size: 56, color: AppCores.primaria),
+                  ),
+                ),
+                const SizedBox(height: AppEspaco.l),
+                const Text('App Segurança',
+                    style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
+                const SizedBox(height: 4),
+                Text('Relatos • DTO • GSD • GSA • GSP',
+                    style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13)),
+              ]),
             ),
           ),
-        ),
+
+          // ---------- Cartão do formulário ----------
+          Transform.translate(
+            offset: const Offset(0, -36),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppEspaco.xl),
+              child: Container(
+                padding: const EdgeInsets.all(AppEspaco.xl),
+                decoration: BoxDecoration(
+                  color: AppCores.superficie,
+                  borderRadius: BorderRadius.circular(AppRaio.xl),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 24, offset: const Offset(0, 10)),
+                  ],
+                ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: _modoTrocaSenha ? _buildTrocaSenhaForm() : _buildLoginForm(),
+                ),
+              ),
+            ),
+          ),
+          Text('Grupo Rizatti • Segurança do Trabalho', style: AppTexto.legenda.copyWith(fontSize: 12)),
+          const SizedBox(height: AppEspaco.xl),
+        ]),
       ),
     );
   }
 
   Widget _buildLoginForm() {
     return Column(
+      key: const ValueKey('login'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          '🛡️ App Segurança',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 24),
-        
+        Text('Entrar', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppCores.texto)),
+        const SizedBox(height: 4),
+        Text('Use seu CPF e senha de acesso.', style: AppTexto.legenda),
+        const SizedBox(height: AppEspaco.xl),
         if (_erro.isNotEmpty) _buildErrorCard(),
-
-        // Label + Input de CPF
-        const Text('CPF (Somente números)', style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
         TextField(
           controller: _cpfController,
-          // Força o teclado numérico nativo a abrir
           keyboardType: TextInputType.number,
+          inputFormatters: [_mascaraCpf],
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _focoSenha.requestFocus(),
           decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.person, color: Colors.grey),
-            hintText: 'Ex: 12345678900',
-            border: OutlineInputBorder(),
-            filled: true,
-            fillColor: Color(0xFFF8FAFC),
+            labelText: 'CPF',
+            hintText: '000.000.000-00',
+            prefixIcon: Icon(Icons.badge_outlined),
           ),
         ),
-        const SizedBox(height: 16),
-
-        // Label + Input de Senha
-        const Text('Senha', style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppEspaco.l),
         TextField(
           controller: _senhaController,
-          obscureText: true, // Substitui type="password"
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.lock, color: Colors.grey),
-            hintText: 'Sua senha',
-            border: OutlineInputBorder(),
-            filled: true,
-            fillColor: Color(0xFFF8FAFC),
+          focusNode: _focoSenha,
+          obscureText: !_mostrarSenha,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _isLoading ? null : _handleLogin(),
+          decoration: InputDecoration(
+            labelText: 'Senha',
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              tooltip: _mostrarSenha ? 'Ocultar senha' : 'Mostrar senha',
+              icon: Icon(_mostrarSenha ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+              onPressed: () => setState(() => _mostrarSenha = !_mostrarSenha),
+            ),
           ),
         ),
-        const SizedBox(height: 24),
-
+        const SizedBox(height: AppEspaco.s),
+        Text('Primeiro acesso? A senha inicial é o seu CPF (só números).',
+            style: TextStyle(fontSize: 12, color: AppCores.textoSuave)),
+        const SizedBox(height: AppEspaco.xl),
         ElevatedButton(
           onPressed: _isLoading ? null : _handleLogin,
-          child: _isLoading 
-            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white))
-            : const Text('Entrar'),
+          child: _isLoading
+              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Entrar'),
         ),
       ],
     );
@@ -225,55 +259,63 @@ class _LoginPageState extends State<LoginPage> {
 
   Widget _buildTrocaSenhaForm() {
     return Column(
+      key: const ValueKey('troca'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          '⚠️ Nova Senha',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.orange),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Defina a sua nova senha de acesso pessoal.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey, fontSize: 13),
-        ),
-        const SizedBox(height: 24),
-
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: AppCores.alerta.withOpacity(0.15), borderRadius: BorderRadius.circular(AppRaio.m)),
+            child: const Icon(Icons.key_outlined, color: AppCores.alerta),
+          ),
+          const SizedBox(width: AppEspaco.m),
+          Expanded(
+            child: Text('Crie sua senha', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppCores.texto)),
+          ),
+        ]),
+        const SizedBox(height: AppEspaco.s),
+        Text('No primeiro acesso, defina uma senha pessoal para entrar no app.', style: AppTexto.legenda),
+        const SizedBox(height: AppEspaco.xl),
         if (_erro.isNotEmpty) _buildErrorCard(),
-
-        const Text('Nova Senha', style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
         TextField(
           controller: _novaSenhaController,
-          obscureText: true,
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.vpn_key, color: Colors.grey),
+          obscureText: !_mostrarNovaSenha,
+          decoration: InputDecoration(
+            labelText: 'Nova senha',
             hintText: 'Mínimo 4 caracteres',
-            border: OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.lock_reset),
+            suffixIcon: IconButton(
+              icon: Icon(_mostrarNovaSenha ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+              onPressed: () => setState(() => _mostrarNovaSenha = !_mostrarNovaSenha),
+            ),
           ),
         ),
-        const SizedBox(height: 16),
-
-        const Text('Confirme a Nova Senha', style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppEspaco.l),
         TextField(
           controller: _confirmaSenhaController,
-          obscureText: true,
+          obscureText: !_mostrarNovaSenha,
+          onSubmitted: (_) => _isLoading ? null : _handleAtualizarSenha(),
           decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.vpn_key, color: Colors.grey),
-            hintText: 'Repita a senha',
-            border: OutlineInputBorder(),
+            labelText: 'Confirme a nova senha',
+            prefixIcon: Icon(Icons.lock_outline),
           ),
         ),
-        const SizedBox(height: 24),
-
+        const SizedBox(height: AppEspaco.xl),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          style: ElevatedButton.styleFrom(backgroundColor: AppCores.sucesso),
           onPressed: _isLoading ? null : _handleAtualizarSenha,
-          child: _isLoading 
-            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white))
-            : const Text('Salvar e Entrar'),
+          child: _isLoading
+              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Salvar e entrar'),
+        ),
+        TextButton(
+          onPressed: _isLoading
+              ? null
+              : () => setState(() {
+                    _modoTrocaSenha = false;
+                    _erro = '';
+                  }),
+          child: const Text('Voltar'),
         ),
       ],
     );
@@ -281,17 +323,21 @@ class _LoginPageState extends State<LoginPage> {
 
   Widget _buildErrorCard() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: AppEspaco.l),
+      padding: const EdgeInsets.all(AppEspaco.m),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF2F2),
-        border: Border.all(color: const Color(0xFFFECACA)),
-        borderRadius: BorderRadius.circular(8),
+        color: AppCores.tinta(AppCores.perigo, 0.07),
+        border: Border.all(color: AppCores.perigo.withOpacity(0.35)),
+        borderRadius: BorderRadius.circular(AppRaio.m),
       ),
-      child: Text(
-        _erro,
-        style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13, fontWeight: FontWeight.w500),
-      ),
+      child: Row(children: [
+        Icon(Icons.error_outline, color: AppCores.legivel(const Color(0xFFB91C1C)), size: 20),
+        const SizedBox(width: AppEspaco.s),
+        Expanded(
+          child: Text(_erro,
+              style: TextStyle(color: AppCores.legivel(const Color(0xFFB91C1C)), fontSize: 13, fontWeight: FontWeight.w500)),
+        ),
+      ]),
     );
   }
 }

@@ -1,90 +1,98 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 
-// Importe as telas para onde a splash pode redirecionar
-import 'login_page.dart'; 
-import 'base_layout.dart';
-
+// =====================================================
+// Splash com o vídeo assets/animacao-splash.mp4
+// - Fundo branco igual ao da splash nativa (#FFFFFF)
+// - O vídeo é levemente ampliado e recortado (ClipRect) para esconder a
+//   linha de 1-2 px que o encoder (H.264) deixa na borda do quadro.
+// - Ao terminar: vai para /home se houver login salvo, senão /login.
+// =====================================================
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({Key? key}) : super(key: key);
+  const SplashScreen({super.key});
 
   @override
-  _SplashScreenState createState() => _SplashScreenState();
+  State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  late VideoPlayerController _controller;
-  bool _navigated = false; 
+  // Se ainda aparecer a linha, aumente um pouco (ex.: 1.06)
+  static const double _zoomBorda = 1.04;
+  static const Duration _tempoMaximo = Duration(seconds: 8);
+
+  late final VideoPlayerController _video;
+  bool _pronto = false;
+  bool _navegou = false;
+  Timer? _seguranca;
 
   @override
   void initState() {
     super.initState();
-    
-    // AQUI FOI ALTERADO PARA O NOME EXATO DO SEU VÍDEO
-    _controller = VideoPlayerController.asset('assets/animacao-splash.mp4')
-      ..initialize().then((_) {
-        setState(() {});
-        _controller.setVolume(0.0); 
-        _controller.play();
-      });
-
-    _controller.addListener(() {
-      if (_controller.value.isInitialized &&
-          !_controller.value.isPlaying &&
-          _controller.value.duration == _controller.value.position) {
-            
-        if (!_navigated) {
-          _navigated = true;
-          _checkSessionAndNavigate();
-        }
-      }
-    });
+    _video = VideoPlayerController.asset('assets/animacao-splash.mp4');
+    _iniciar();
+    // Se o vídeo travar ou não carregar, segue mesmo assim
+    _seguranca = Timer(_tempoMaximo, _seguir);
   }
 
-  Future<void> _checkSessionAndNavigate() async {
-    final prefs = await SharedPreferences.getInstance();
-    
-    await prefs.clear(); 
-    
-    final usuario = prefs.getString('usuario');
-
-    if (mounted) {
-      Widget proximaTela = (usuario != null && usuario.isNotEmpty) 
-          ? const BaseLayout() 
-          : const LoginPage();
-
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => proximaTela,
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(
-              opacity: animation,
-              child: child,
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 800),
-        ),
-      );
+  Future<void> _iniciar() async {
+    try {
+      await _video.initialize();
+      await _video.setVolume(0);
+      if (!mounted) return;
+      setState(() => _pronto = true);
+      _video.addListener(_aoAtualizarVideo);
+      await _video.play();
+    } catch (e) {
+      debugPrint('Splash: erro no vídeo -> $e');
+      _seguir();
     }
+  }
+
+  void _aoAtualizarVideo() {
+    final v = _video.value;
+    if (v.isInitialized && !v.isPlaying && v.position >= v.duration - const Duration(milliseconds: 150)) {
+      _seguir();
+    }
+  }
+
+  Future<void> _seguir() async {
+    if (_navegou) return;
+    _navegou = true;
+    _seguranca?.cancel();
+
+    final prefs = await SharedPreferences.getInstance();
+    final usuario = prefs.getString('usuario');
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(
+      context,
+      (usuario != null && usuario.isNotEmpty) ? '/home' : '/login',
+    );
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _seguranca?.cancel();
+    _video.removeListener(_aoAtualizarVideo);
+    _video.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Se precisar, mude essa cor para combinar com o fundo do seu vídeo
-      backgroundColor: const Color.fromARGB(255, 255, 255, 255), 
+      backgroundColor: Colors.white,
       body: Center(
-        child: _controller.value.isInitialized
-            ? AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: VideoPlayer(_controller),
+        child: _pronto
+            ? ClipRect(
+                child: AspectRatio(
+                  aspectRatio: _video.value.aspectRatio,
+                  child: Transform.scale(
+                    scale: _zoomBorda,
+                    child: VideoPlayer(_video),
+                  ),
+                ),
               )
             : const SizedBox.shrink(),
       ),

@@ -53,6 +53,7 @@ class _GspPageState extends State<GspPage> {
   bool _carregandoEquipe = false;
   List<Map<String, dynamic>> _historico = [];
   bool _carregandoHistorico = false;
+  bool _historicoCarregado = false;
   String _erroHistorico = '';
 
   // Formulário
@@ -128,7 +129,10 @@ class _GspPageState extends State<GspPage> {
       final r = await apiGet('/api/gsp/');
       if (!mounted) return;
       if (respostaOk(r)) {
-        setState(() => _historico = listaDados(decodificar(r)));
+        setState(() {
+          _historico = listaDados(decodificar(r));
+          _historicoCarregado = true;
+        });
       } else {
         setState(() => _erroHistorico = mensagemErro(r, prefixo: 'Erro ao carregar'));
       }
@@ -213,7 +217,7 @@ class _GspPageState extends State<GspPage> {
     final lista = _historico.where((r) {
       final matchBusca = contemTexto(r['motorista'], _busca) || contemTexto(r['avaliador'], _busca);
       final matchUnb = _filtroUnb.isEmpty || r['unb'] == _filtroUnb;
-      final matchPerfil = _sessao.podeExcluir || r['avaliador'] == _sessao.nome || r['motorista'] == _sessao.nome;
+      final matchPerfil = _sessao.podeExcluir || registroEhMeu(_sessao, kRegraGsp, r);
       return matchBusca && matchUnb && matchPerfil;
     }).toList();
     lista.sort((a, b) => soDataIso(b['data_relato']).compareTo(soDataIso(a['data_relato'])));
@@ -222,21 +226,37 @@ class _GspPageState extends State<GspPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_carregandoSessao) {
+    const titulo = 'Segurança de Puxada (GSP)';
+    if (_carregandoSessao || (!_historicoCarregado && _erroHistorico.isEmpty)) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    if (!_historicoCarregado) {
+      return TelaErro(titulo: titulo, mensagem: _erroHistorico, onTentarDeNovo: _carregarHistorico);
+    }
+
+    final nivel = calcularAcesso(_sessao, kRegraGsp, _historico);
+    if (nivel == NivelAcesso.nenhum) {
+      return const TelaSemAcesso(
+        titulo: titulo,
+        mensagem: 'O GSP é liberado para Motorista Carreta Puxada, para quem já foi avaliado '
+            'e para quem já aplicou GSP.',
+      );
+    }
+    final podeCriar = nivel == NivelAcesso.completo;
+
     final abas = <Tab>[
-      const Tab(icon: Icon(Icons.add_circle_outline), text: 'Novo GSP'),
+      if (podeCriar) const Tab(icon: Icon(Icons.add_circle_outline), text: 'Novo GSP'),
       Tab(icon: const Icon(Icons.search), text: _sessao.podeExcluir ? 'Consulta' : 'Meus Registros'),
       if (_sessao.podeExcluir) const Tab(icon: Icon(Icons.pie_chart_outline), text: 'Dashboard'),
     ];
     final telas = <Widget>[
-      _abaIncluir(),
+      if (podeCriar) _abaIncluir(),
       _abaConsulta(),
       if (_sessao.podeExcluir) _abaDashboard(),
     ];
 
     return DefaultTabController(
+      key: ValueKey('abas-${abas.length}'),
       length: abas.length,
       child: Scaffold(
         appBar: AppBar(
@@ -257,110 +277,121 @@ class _GspPageState extends State<GspPage> {
     final respondidas = kPerguntasGsp.where((p) => _respostas.containsKey(p)).length;
     final nok = _respostas.values.where((v) => v == 'NOK').length;
 
-    return SingleChildScrollView(
-      controller: _scrollForm,
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        CampoData(label: 'Data da Ocorrência*', valor: _data, onChanged: (d) => setState(() => _data = d)),
-        const SizedBox(height: 14),
-        CampoDropdown(
-          label: 'UNB*',
-          opcoes: kListaUnbs,
-          valor: _unb,
-          onChanged: (v) {
-            if (v == null || v == _unb) return;
-            setState(() {
-              _unb = v;
-              _motorista = null;
-              _chaveBusca = UniqueKey();
-            });
-            _carregarEquipe(v);
-          },
-        ),
-        const SizedBox(height: 14),
-        CampoSomenteLeitura(label: 'Avaliador (Sua Conta)*', valor: _sessao.nome),
-        const SizedBox(height: 14),
-        CampoBuscaPessoa(
-          key: _chaveBusca,
-          label: 'Motorista*',
-          opcoes: _equipe,
-          carregando: _carregandoEquipe,
-          onChanged: (v) => setState(() => _motorista = v),
-        ),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _cavaloCtrl,
-              textCapitalization: TextCapitalization.characters,
-              inputFormatters: [LengthLimitingTextInputFormatter(8)],
-              decoration: decoracao('Placa do Cavalo*', hint: 'ABC-1234'),
+    return Column(children: [
+      Expanded(
+        child: ListView(
+          controller: _scrollForm,
+          padding: const EdgeInsets.all(AppEspaco.l),
+          children: [
+            SecaoForm(
+              titulo: 'Dados da avaliação',
+              icone: Icons.event_note_outlined,
+              child: Row(children: [
+                Expanded(
+                  child: CampoData(label: 'Data*', valor: _data, onChanged: (d) => setState(() => _data = d)),
+                ),
+                const SizedBox(width: AppEspaco.m),
+                Expanded(
+                  child: CampoDropdown(
+                    label: 'UNB*',
+                    opcoes: kListaUnbs,
+                    valor: _unb,
+                    onChanged: (v) {
+                      if (v == null || v == _unb) return;
+                      setState(() {
+                        _unb = v;
+                        _motorista = null;
+                        _chaveBusca = UniqueKey();
+                      });
+                      _carregarEquipe(v);
+                    },
+                  ),
+                ),
+              ]),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: TextField(
-              controller: _carretaCtrl,
-              textCapitalization: TextCapitalization.characters,
-              inputFormatters: [LengthLimitingTextInputFormatter(8)],
-              decoration: decoracao('Placa da Carreta*', hint: 'XYZ-9876'),
+            SecaoForm(
+              titulo: 'Motorista e veículo',
+              icone: Icons.local_shipping_outlined,
+              child: Column(children: [
+                CampoSomenteLeitura(label: 'Avaliador', valor: _sessao.nome, icone: Icons.person_outline),
+                const SizedBox(height: AppEspaco.m),
+                CampoBuscaPessoa(
+                  key: _chaveBusca,
+                  label: 'Motorista*',
+                  opcoes: _equipe,
+                  carregando: _carregandoEquipe,
+                  onChanged: (v) => setState(() => _motorista = v),
+                ),
+                const SizedBox(height: AppEspaco.m),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _cavaloCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      inputFormatters: [LengthLimitingTextInputFormatter(8)],
+                      decoration: decoracao('Placa cavalo*', hint: 'ABC1D23', prefixo: Icons.pin_outlined),
+                    ),
+                  ),
+                  const SizedBox(width: AppEspaco.m),
+                  Expanded(
+                    child: TextField(
+                      controller: _carretaCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      inputFormatters: [LengthLimitingTextInputFormatter(8)],
+                      decoration: decoracao('Placa carreta*', hint: 'XYZ9K87', prefixo: Icons.pin_outlined),
+                    ),
+                  ),
+                ]),
+              ]),
             ),
-          ),
-        ]),
-        const Divider(height: 36),
-        Row(children: [
-          const Expanded(child: Text('📋 Questionário GSP', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
-          Text('$respondidas/${kPerguntasGsp.length}',
-              style: TextStyle(fontWeight: FontWeight.bold, color: respondidas == kPerguntasGsp.length ? Colors.green : Colors.grey)),
-          if (nok > 0) ...[const SizedBox(width: 8), Etiqueta('$nok NOK', cor: Colors.red)],
-        ]),
-        const SizedBox(height: 12),
-        ...List.generate(kPerguntasGsp.length, (i) {
-          final p = kPerguntasGsp.elementAt(i);
-          final (cat, texto) = separarPerguntaGsp(p);
-          return PerguntaBinaria(
-            numero: i + 1,
-            categoria: cat,
-            pergunta: texto,
-            valor: _respostas[p],
-            destacarFalta: _tentouSalvar,
-            onChanged: (v) => setState(() => _respostas[p] = v),
-          );
-        }),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _obsCtrl,
-          maxLines: 4,
-          decoration: decoracao('Observações', hint: 'Digite aqui as observações...'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppEspaco.xs, AppEspaco.xs, AppEspaco.xs, AppEspaco.m),
+              child: Text('QUESTIONÁRIO GSP • ${kPerguntasGsp.length} PERGUNTAS', style: AppTexto.rotulo),
+            ),
+            ...List.generate(kPerguntasGsp.length, (i) {
+              final p = kPerguntasGsp.elementAt(i);
+              final (cat, texto) = separarPerguntaGsp(p);
+              return PerguntaBinaria(
+                numero: i + 1,
+                categoria: cat,
+                pergunta: texto,
+                valor: _respostas[p],
+                destacarFalta: _tentouSalvar,
+                onChanged: (v) => setState(() => _respostas[p] = v),
+              );
+            }),
+            const SizedBox(height: AppEspaco.s),
+            SecaoForm(
+              titulo: 'Observações',
+              icone: Icons.notes_outlined,
+              child: TextField(
+                controller: _obsCtrl,
+                minLines: 3,
+                maxLines: 6,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: decoracao('Observações', hint: 'Digite aqui as observações...'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          height: 52,
-          child: ElevatedButton.icon(
-            onPressed: _salvando ? null : _salvar,
-            icon: _salvando
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.save),
-            label: Text(_salvando ? 'Salvando...' : 'Finalizar e Salvar GSP', style: const TextStyle(fontSize: 16)),
-          ),
-        ),
-        const SizedBox(height: 32),
-      ]),
-    );
+      ),
+      BarraAcaoInferior(
+        rotulo: 'Finalizar e salvar GSP',
+        icone: Icons.send_rounded,
+        carregando: _salvando,
+        onPressed: _salvar,
+        topo: ProgressoChecklist(respondidas: respondidas, total: kPerguntasGsp.length, ruins: nok),
+      ),
+    ]);
   }
 
   Widget _barraFiltros() {
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      child: Column(children: [
-        CampoBuscaTexto(hint: 'Buscar por motorista ou avaliador...', onChanged: (v) => setState(() => _busca = v)),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FiltroMenu(rotulo: 'UNB', valor: _filtroUnb, opcoes: kListaUnbs, onChanged: (v) => setState(() => _filtroUnb = v)),
-        ),
-      ]),
+    return BarraFiltros(
+      hint: 'Buscar por motorista ou avaliador...',
+      onBusca: (v) => setState(() => _busca = v),
+      filtros: [
+        FiltroMenu(rotulo: 'UNB', valor: _filtroUnb, opcoes: kListaUnbs, onChanged: (v) => setState(() => _filtroUnb = v)),
+      ],
     );
   }
 
@@ -368,7 +399,7 @@ class _GspPageState extends State<GspPage> {
     final lista = _filtrados;
     Widget corpo;
     if (_carregandoHistorico && _historico.isEmpty) {
-      corpo = const Center(child: CircularProgressIndicator());
+      corpo = const ListaCarregando();
     } else if (_erroHistorico.isNotEmpty) {
       corpo = EstadoVazio(_erroHistorico, icone: Icons.wifi_off);
     } else if (lista.isEmpty) {
@@ -383,6 +414,7 @@ class _GspPageState extends State<GspPage> {
           final nok = resp.values.where((v) => v.toString().toUpperCase() == 'NOK').length;
           final obs = (r['observacao'] ?? '').toString().trim();
           return CardRegistro(
+            fotoNome: (r['motorista'] ?? '').toString(),
             titulo: (r['protocolo'] ?? r['id'] ?? '-').toString(),
             subtitulo: '${dataBr(r['data_relato'])} • ${r['unb'] ?? '-'}\nMotorista: ${r['motorista'] ?? '-'}',
             etiqueta: nok > 0 ? Etiqueta('$nok NOK', cor: Colors.red) : const Etiqueta('100% OK', cor: Colors.green),
@@ -412,43 +444,152 @@ class _GspPageState extends State<GspPage> {
   Widget _abaDashboard() {
     final lista = _filtrados;
     final total = lista.length;
-    final motoristas = lista.map((g) => g['motorista']).toSet().length;
+    final motoristas = lista.map((g) => (g['motorista'] ?? '').toString()).where((s) => s.isNotEmpty).toSet().length;
+    final avaliadores = lista.map((g) => (g['avaliador'] ?? '').toString()).where((s) => s.isNotEmpty).toSet().length;
 
-    // Itens com mais NOK (extra no app, ajuda a priorizar)
+    var ok = 0;
+    var nok = 0;
     final nokPorItem = <String, int>{};
+    final nokPorCategoria = <String, int>{};
+    final porData = <String, double>{};
+    final okDia = <String, int>{};
+    final totDia = <String, int>{};
     for (final g in lista) {
+      final d = soDataIso(g['data_relato']);
+      if (d.isNotEmpty) porData[d] = (porData[d] ?? 0.0) + 1;
       respostasDe(g['respostas_dict']).forEach((k, v) {
-        if (v.toString().toUpperCase() == 'NOK') {
-          final (_, texto) = separarPerguntaGsp(k);
+        final r = v.toString().toUpperCase().trim();
+        if (r == 'OK') {
+          ok++;
+          okDia[d] = (okDia[d] ?? 0) + 1;
+          totDia[d] = (totDia[d] ?? 0) + 1;
+        } else if (r == 'NOK') {
+          nok++;
+          totDia[d] = (totDia[d] ?? 0) + 1;
+          final (cat, texto) = separarPerguntaGsp(k);
           nokPorItem[texto] = (nokPorItem[texto] ?? 0) + 1;
+          final c = cat.trim();
+          final chave = c.isEmpty ? 'GERAL' : c;
+          nokPorCategoria[chave] = (nokPorCategoria[chave] ?? 0) + 1;
         }
       });
     }
+    final respondidas = ok + nok;
+    final pct = respondidas == 0 ? 0.0 : ok * 100 / respondidas;
+    final pctDia = <String, double>{};
+    totDia.forEach((d, t) {
+      if (t > 0 && d.isNotEmpty) pctDia[d] = (okDia[d] ?? 0) * 100 / t;
+    });
+    bool temNok(Map<String, dynamic> g) =>
+        respostasDe(g['respostas_dict']).values.any((v) => v.toString().toUpperCase() == 'NOK');
+    final comNok = lista.where(temNok).length;
 
-    final porData = <String, double>{};
-    for (final g in lista) {
-      final d = soDataIso(g['data_relato']);
-      porData[d] = (porData[d] ?? 0.0) + 1;
-    }
+    final (status, corStatus) = pct >= 95
+        ? ('Padrão atingido', AppCores.sucesso)
+        : (pct >= 85 ? ('Atenção', AppCores.alerta) : ('Abaixo do padrão', AppCores.perigo));
+
+    final mensal = empilharPorMes(lista, campoData: 'data_relato', qtdSeries: 2, serieDe: (g) => temNok(g) ? 1 : 0);
 
     return Column(children: [
       _barraFiltros(),
       Expanded(
         child: RefreshIndicator(
           onRefresh: _carregarHistorico,
-          child: ListView(padding: const EdgeInsets.all(16), children: [
-            GradeKpis([
-              KpiCard(titulo: 'Total de GSPs', valor: '$total', cor: const Color(0xFF3B82F6)),
-              KpiCard(titulo: 'Motoristas Avaliados', valor: '$motoristas', cor: const Color(0xFF10B981)),
-            ]),
-            CartaoGrafico(titulo: 'Top 10 Avaliadores', child: BarrasHorizontais(itens: topContagem(contar(lista, 'avaliador')))),
-            CartaoGrafico(
-              titulo: 'Top 10 Itens NOK',
-              child: BarrasHorizontais(itens: topContagem(nokPorItem), cor: const Color(0xFFEF4444)),
-            ),
-            CartaoGrafico(titulo: 'Evolução de Aplicações (últimos dias)', child: GraficoLinhaTempo(porData: porData)),
-            const SizedBox(height: 24),
-          ]),
+          child: total == 0
+              ? ListView(children: const [
+                  SizedBox(height: 60),
+                  EstadoVazio('Sem GSPs no filtro atual.', icone: Icons.insights_outlined),
+                ])
+              : ListView(padding: const EdgeInsets.fromLTRB(AppEspaco.l, AppEspaco.l, AppEspaco.l, AppEspaco.xxl), children: [
+                  PainelIndice(
+                    titulo: 'Conformidade dos GSPs',
+                    percentual: pct,
+                    status: status,
+                    corStatus: corStatus,
+                    descricao: 'Itens OK sobre o total de itens avaliados.',
+                    numeros: [
+                      ('$total', 'GSPs'),
+                      ('$motoristas', 'motoristas'),
+                      ('$nok', 'itens NOK'),
+                    ],
+                  ),
+                  const TituloDash('Indicadores'),
+                  GradeKpis([
+                    KpiCard(
+                        titulo: 'Motoristas avaliados',
+                        valor: '$motoristas',
+                        cor: AppCores.info,
+                        icone: Icons.local_shipping_outlined,
+                        subtitulo: motoristas == 0 ? null : '${(total / motoristas).toStringAsFixed(1)} GSP por motorista'),
+                    KpiCard(
+                        titulo: 'Avaliadores ativos',
+                        valor: '$avaliadores',
+                        cor: AppCores.roxo,
+                        icone: Icons.badge_outlined),
+                    KpiCard(
+                        titulo: 'GSPs com NOK',
+                        valor: '$comNok',
+                        cor: AppCores.perigo,
+                        icone: Icons.gpp_maybe_outlined,
+                        fracao: total == 0 ? 0 : comNok / total,
+                        subtitulo: total == 0 ? null : '${(comNok * 100 / total).toStringAsFixed(0)}% dos GSPs'),
+                    KpiCard(
+                        titulo: 'GSPs 100% OK',
+                        valor: '${total - comNok}',
+                        cor: AppCores.sucesso,
+                        icone: Icons.verified_outlined,
+                        fracao: total == 0 ? 0 : (total - comNok) / total),
+                  ]),
+                  if (nokPorItem.isNotEmpty)
+                    CartaoInsight(
+                      icone: Icons.priority_high_rounded,
+                      titulo: 'ITEM MAIS REPROVADO',
+                      texto: '${topContagem(nokPorItem, n: 1).first.rotulo} '
+                          '(${topContagem(nokPorItem, n: 1).first.valor.toInt()} NOK)',
+                      cor: AppCores.perigo,
+                    ),
+                  const TituloDash('Evolução'),
+                  CartaoGrafico(
+                    titulo: 'GSPs por mês',
+                    subtitulo: '100% OK x com NOK',
+                    icone: Icons.stacked_bar_chart,
+                    child: GraficoBarrasEmpilhadas(
+                      rotulos: mensal.rotulos,
+                      valores: mensal.valores,
+                      series: const [
+                        SerieEmpilhada('100% OK', AppCores.sucesso),
+                        SerieEmpilhada('Com NOK', AppCores.perigo),
+                      ],
+                    ),
+                  ),
+                  CartaoGrafico(
+                    titulo: '% de conformidade',
+                    icone: Icons.show_chart,
+                    child: GraficoLinhaTempo(porData: pctDia, cor: AppCores.sucesso, maxY: 100, media: true, sufixo: '%'),
+                  ),
+                  CartaoGrafico(
+                    titulo: 'Aplicações',
+                    icone: Icons.timeline,
+                    child: GraficoLinhaTempo(porData: porData, cor: AppCores.primaria),
+                  ),
+                  const TituloDash('Detalhamento'),
+                  CartaoGrafico(
+                    titulo: 'Top itens NOK',
+                    icone: Icons.rule_outlined,
+                    child: BarrasHorizontais(itens: topContagem(nokPorItem, n: 8), cor: AppCores.perigo),
+                  ),
+                  if (nokPorCategoria.length > 1)
+                    CartaoGrafico(
+                      titulo: 'NOK por categoria',
+                      icone: Icons.category_outlined,
+                      child: GraficoPizza(contagem: nokPorCategoria, rotuloCentro: 'NOK'),
+                    ),
+                  CartaoGrafico(
+                    titulo: 'Top avaliadores',
+                    icone: Icons.emoji_events_outlined,
+                    child: BarrasHorizontais(itens: topContagem(contar(lista, 'avaliador'), n: 10), cor: AppCores.roxo),
+                  ),
+                ]),
         ),
       ),
     ]);

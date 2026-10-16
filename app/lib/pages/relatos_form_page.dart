@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api.dart';
+import '../widgets/comum.dart';
 
 // =====================================================
 // Listas iguais às do Relatos.tsx (web)
@@ -305,258 +306,243 @@ class _RelatosFormPageState extends State<RelatosFormPage> {
   // =====================================================
   // UI
   // =====================================================
-  InputDecoration _decoracao(String label, {String? hint}) => InputDecoration(
-        labelText: label,
-        hintText: hint,
-        border: const OutlineInputBorder(),
-        alignLabelWithHint: true,
-      );
+  int get _camposPreenchidos {
+    var n = 0;
+    if (_relatado != null) n++;
+    if (_area != null) n++;
+    if (_acaoImediata != null) n++;
+    if (_processos.isNotEmpty) n++;
+    if (_classificacao != null) n++;
+    if (_detalhe != null && (_detalhe != kDetalheOutro || _detalheOutroController.text.trim().isNotEmpty)) n++;
+    if (_descricaoController.text.trim().isNotEmpty) n++;
+    return n;
+  }
 
   Widget _dropdown({
     required String label,
     required List<String> opcoes,
     required String? valor,
     required ValueChanged<String?> onChanged,
+    IconData? icone,
   }) {
-    return DropdownButtonFormField<String>(
-      decoration: _decoracao(label),
-      value: valor,
-      isExpanded: true, // textos longos (tarefa/ação) quebram sem estourar a tela
-      hint: const Text('Selecione uma opção...'),
-      items: opcoes
-          .map((o) => DropdownMenuItem<String>(
-                value: o,
-                child: Text(o, overflow: TextOverflow.ellipsis, maxLines: 2),
-              ))
-          .toList(),
+    return CampoDropdown(
+      label: label,
+      opcoes: opcoes,
+      valor: valor,
       onChanged: onChanged,
+      hint: 'Selecione uma opção...',
+      icone: icone,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Registrar Novo Relato')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: AppBar(title: const Text('Novo Relato')),
+      bottomNavigationBar: BarraAcaoInferior(
+        rotulo: 'Salvar Relato',
+        icone: Icons.send_rounded,
+        carregando: _salvando,
+        onPressed: _salvarRelato,
+        topo: ProgressoChecklist(respondidas: _camposPreenchidos, total: 7, sufixo: 'campos preenchidos'),
+      ),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: ListView(
+          padding: const EdgeInsets.all(AppEspaco.l),
           children: [
-            // 1. DATA
-            _buildSessao(
-              "1. Data da Ocorrência",
-              "Quando o evento aconteceu?",
-              InkWell(
-                onTap: _escolherData,
-                child: InputDecorator(
-                  decoration: _decoracao('Data').copyWith(suffixIcon: const Icon(Icons.calendar_month)),
-                  child: Text(_dataBr(_dataRelato), style: const TextStyle(fontSize: 16)),
-                ),
+            // 1. QUANDO
+            SecaoForm(
+              titulo: 'Quando aconteceu?',
+              icone: Icons.event_outlined,
+              child: CampoData(
+                label: 'Data da ocorrência',
+                valor: _dataRelato,
+                onChanged: (d) => setState(() => _dataRelato = d),
               ),
             ),
 
             // 2. IDENTIFICAÇÃO
-            _buildSessao(
-              "2. Identificação",
-              "Como prefere registrar este relato?",
-              Column(
-                children: [
-                  RadioListTile<bool>(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text("Quero me identificar ($_nomeUsuario)", style: const TextStyle(fontWeight: FontWeight.bold)),
-                    value: true,
-                    groupValue: _identificar,
-                    onChanged: (v) => setState(() => _identificar = v ?? true),
+            SecaoForm(
+              titulo: 'Identificação',
+              subtitulo: 'Como prefere registrar este relato?',
+              icone: Icons.badge_outlined,
+              child: Column(children: [
+                SeletorCartoes<bool>(
+                  valor: _identificar,
+                  onChanged: (v) => setState(() => _identificar = v),
+                  opcoes: [
+                    OpcaoCartao(
+                      valor: true,
+                      titulo: 'Me identificar',
+                      subtitulo: _nomeUsuario,
+                      icone: Icons.person_outline,
+                    ),
+                    const OpcaoCartao(
+                      valor: false,
+                      titulo: 'Anônimo',
+                      subtitulo: 'Seu nome não aparece',
+                      icone: Icons.visibility_off_outlined,
+                      cor: AppCores.cabecalho2,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppEspaco.l),
+                Row(children: [
+                  Expanded(
+                    child: _dropdown(
+                      label: 'UNB*',
+                      opcoes: kListaUnb,
+                      valor: _unb,
+                      onChanged: (v) => setState(() => _unb = v ?? _unb),
+                    ),
                   ),
-                  RadioListTile<bool>(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text("Não quero me identificar"),
-                    value: false,
-                    groupValue: _identificar,
-                    onChanged: (v) => setState(() => _identificar = v ?? false),
-                  ),
-                  const SizedBox(height: 8),
-                  _dropdown(
-                    label: 'UNB*',
-                    opcoes: kListaUnb,
-                    valor: _unb,
-                    onChanged: (v) => setState(() => _unb = v ?? _unb),
-                  ),
-                  const SizedBox(height: 16),
-                  _dropdown(
-                    label: 'Departamento*',
-                    opcoes: kListaDepartamentos,
-                    valor: _departamento,
-                    onChanged: (v) => setState(() => _departamento = v ?? _departamento),
-                  ),
-                  const SizedBox(height: 16),
-                  InputDecorator(
-                    decoration: _decoracao('Relator*').copyWith(filled: true, fillColor: Colors.grey.shade100),
-                    child: Text(_identificar ? _nomeUsuario : 'ANÔNIMO', style: TextStyle(color: Colors.grey.shade700)),
-                  ),
-                  const SizedBox(height: 16),
-                  _isLoadingColaboradores
-                      ? const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12.0),
-                          child: Row(
-                            children: [
-                              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                              SizedBox(width: 16),
-                              Text('Carregando colaboradores...', style: TextStyle(color: Colors.grey)),
-                            ],
-                          ),
-                        )
-                      : Autocomplete<String>(
-                          key: _autocompleteKey,
-                          optionsBuilder: (TextEditingValue v) {
-                            if (v.text.isEmpty) return _nomesColaboradores.take(15);
-                            final termo = v.text.toLowerCase();
-                            return _nomesColaboradores.where((o) => o.toLowerCase().contains(termo));
-                          },
-                          onSelected: (s) => setState(() => _relatado = s),
-                          fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                            return TextFormField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              // só vale nome escolhido na lista (igual ao select da web)
-                              onChanged: (texto) {
-                                final t = texto.trim();
-                                _relatado = _nomesColaboradores.contains(t) ? t : null;
-                              },
-                              decoration: _decoracao('Colaborador relatado*', hint: 'Digite para buscar...')
-                                  .copyWith(suffixIcon: const Icon(Icons.search)),
-                            );
-                          },
-                        ),
-                ],
+                ]),
+                const SizedBox(height: AppEspaco.m),
+                _dropdown(
+                  label: 'Departamento*',
+                  opcoes: kListaDepartamentos,
+                  valor: _departamento,
+                  onChanged: (v) => setState(() => _departamento = v ?? _departamento),
+                ),
+              ]),
+            ),
+
+            // 3. QUEM
+            SecaoForm(
+              titulo: 'Quem está envolvido?',
+              subtitulo: 'Use "NÃO SE APLICA" para condições inseguras sem pessoa envolvida.',
+              icone: Icons.groups_2_outlined,
+              child: CampoBuscaPessoa(
+                key: _autocompleteKey,
+                label: 'Colaborador relatado*',
+                opcoes: _nomesColaboradores,
+                carregando: _isLoadingColaboradores,
+                onChanged: (v) => setState(() => _relatado = v),
               ),
             ),
 
-            // 3. DETALHES E CLASSIFICAÇÃO
-            _buildSessao(
-              "3. Detalhes e Classificação",
-              "Onde ocorreu e o que foi feito na hora.",
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _dropdown(
-                    label: 'Área relatada*',
-                    opcoes: kListaArea,
-                    valor: _area,
-                    onChanged: (v) => setState(() => _area = v),
-                  ),
-                  const SizedBox(height: 16),
-                  _dropdown(
-                    label: 'Ação imediata*',
-                    opcoes: kListaAcao,
-                    valor: _acaoImediata,
-                    onChanged: (v) => setState(() => _acaoImediata = v),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('Processo* (selecione um ou mais)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: kListaProcesso.map((p) {
-                      return FilterChip(
-                        label: Text(p),
-                        selected: _processos.contains(p),
-                        onSelected: (sel) => setState(() => sel ? _processos.add(p) : _processos.remove(p)),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('Classificação*', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: kListaClassificacao.map((c) {
-                      return ChoiceChip(
-                        label: Text(c),
-                        selected: _classificacao == c,
-                        onSelected: (sel) => setState(() {
-                          _classificacao = sel ? c : null;
+            // 4. ONDE / O QUE
+            SecaoForm(
+              titulo: 'Onde e o que foi feito',
+              icone: Icons.place_outlined,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _dropdown(
+                  label: 'Área relatada*',
+                  opcoes: kListaArea,
+                  valor: _area,
+                  icone: Icons.map_outlined,
+                  onChanged: (v) => setState(() => _area = v),
+                ),
+                const SizedBox(height: AppEspaco.m),
+                _dropdown(
+                  label: 'Ação imediata*',
+                  opcoes: kListaAcao,
+                  valor: _acaoImediata,
+                  icone: Icons.bolt_outlined,
+                  onChanged: (v) => setState(() => _acaoImediata = v),
+                ),
+                const SizedBox(height: AppEspaco.l),
+                const RotuloCampo('Processo* (um ou mais)'),
+                Wrap(
+                  spacing: AppEspaco.s,
+                  runSpacing: AppEspaco.s,
+                  children: kListaProcesso.map((p) {
+                    final sel = _processos.contains(p);
+                    return FilterChip(
+                      label: Text(p),
+                      selected: sel,
+                      showCheckmark: true,
+                      checkmarkColor: AppCores.primaria,
+                      onSelected: (s) => setState(() => s ? _processos.add(p) : _processos.remove(p)),
+                    );
+                  }).toList(),
+                ),
+              ]),
+            ),
+
+            // 5. CLASSIFICAÇÃO
+            SecaoForm(
+              titulo: 'Classificação',
+              icone: Icons.category_outlined,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                ...kListaClassificacao.map((c) {
+                  final (cor, icone) = _estiloClassificacao(c);
+                  final sel = _classificacao == c;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: AppEspaco.s),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      decoration: BoxDecoration(
+                        color: sel ? cor.withOpacity(0.08) : AppCores.superficie,
+                        borderRadius: BorderRadius.circular(AppRaio.m),
+                        border: Border.all(color: sel ? cor : AppCores.borda, width: sel ? 1.6 : 1),
+                      ),
+                      child: ListTile(
+                        dense: true,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRaio.m)),
+                        leading: Icon(icone, color: cor),
+                        title: Text(c,
+                            style: TextStyle(fontWeight: FontWeight.w600, color: sel ? cor : AppCores.texto)),
+                        trailing: Icon(sel ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                            color: sel ? cor : AppCores.textoSuave),
+                        onTap: () => setState(() {
+                          _classificacao = c;
                           _detalhe = null;
                           _detalheOutroController.clear();
                         }),
-                      );
-                    }).toList(),
+                      ),
+                    ),
+                  );
+                }),
+                if (_classificacao != null) ...[
+                  const SizedBox(height: AppEspaco.s),
+                  _dropdown(
+                    label: 'Detalhe da classificação*',
+                    opcoes: _opcoesDetalhe,
+                    valor: _detalhe,
+                    icone: Icons.list_alt_outlined,
+                    onChanged: (v) => setState(() => _detalhe = v),
                   ),
-                  if (_classificacao != null) ...[
-                    const SizedBox(height: 16),
-                    _dropdown(
-                      label: 'Detalhe da classificação*',
-                      opcoes: _opcoesDetalhe,
-                      valor: _detalhe,
-                      onChanged: (v) => setState(() => _detalhe = v),
-                    ),
-                  ],
-                  if (_detalhe == kDetalheOutro) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _detalheOutroController,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: _decoracao('Descreva o detalhe*', hint: 'Ex: USO INCORRETO DE EPI'),
-                    ),
-                  ],
                 ],
-              ),
+                if (_detalhe == kDetalheOutro) ...[
+                  const SizedBox(height: AppEspaco.m),
+                  TextFormField(
+                    controller: _detalheOutroController,
+                    textCapitalization: TextCapitalization.characters,
+                    onChanged: (_) => setState(() {}),
+                    decoration: decoracao('Descreva o detalhe*', hint: 'Ex: USO INCORRETO DE EPI'),
+                  ),
+                ],
+              ]),
             ),
 
-            // 4. DESCRIÇÃO
-            _buildSessao(
-              "4. Descrição do Relato*",
-              "Seja o mais detalhado possível para facilitar a análise.",
-              TextFormField(
+            // 6. DESCRIÇÃO
+            SecaoForm(
+              titulo: 'O que aconteceu?',
+              subtitulo: 'Seja o mais detalhado possível para facilitar a análise.',
+              icone: Icons.notes_outlined,
+              child: TextFormField(
                 controller: _descricaoController,
-                maxLines: 4,
-                decoration: _decoracao('Descrição', hint: 'Descreva os detalhes da ocorrência...'),
+                minLines: 4,
+                maxLines: 8,
+                textCapitalization: TextCapitalization.sentences,
+                onChanged: (_) => setState(() {}),
+                decoration: decoracao('Descrição*', hint: 'Descreva os detalhes da ocorrência...'),
               ),
             ),
-
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _salvando ? null : _salvarRelato,
-                icon: _salvando
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.save),
-                label: Text(_salvando ? 'Salvando...' : 'Salvar Relato', style: const TextStyle(fontSize: 16)),
-              ),
-            ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppEspaco.s),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSessao(String titulo, String subtitulo, Widget conteudo) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 20.0),
-      padding: const EdgeInsets.all(16.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(titulo, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-          const SizedBox(height: 4),
-          Text(subtitulo, style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-          const SizedBox(height: 16),
-          conteudo,
-        ],
-      ),
-    );
+  (Color, IconData) _estiloClassificacao(String c) {
+    final s = _semAcento(c).toLowerCase();
+    if (s.contains('ato inseguro')) return (AppCores.perigo, Icons.back_hand_outlined);
+    if (s.contains('condic')) return (AppCores.alerta, Icons.warning_amber_rounded);
+    if (s.contains('positiva')) return (AppCores.sucesso, Icons.thumb_up_alt_outlined);
+    return (AppCores.info, Icons.report_outlined);
   }
 }

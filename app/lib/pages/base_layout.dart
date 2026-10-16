@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/comum.dart';
 import 'home_page.dart';
-import 'relatos_page.dart'; // <- arquivo da sua tela de lista de relatos (classe RelatosPage)
+import 'relatos_page.dart'; // tela da lista de relatos (classe RelatosPage)
 import 'perfil_page.dart';
 import 'modulos.dart';
 
@@ -18,9 +18,11 @@ class BaseLayout extends StatefulWidget {
 
 class _BaseLayoutState extends State<BaseLayout> {
   Sessao _sessao = Sessao.vazia;
+  AcessosModulos _acessos = AcessosModulos.vazio;
   bool _carregando = true;
   int _pagina = 0; // 0 = Início, 1 = Relatos, 2 = Perfil
   Key _chaveRelatos = UniqueKey();
+  int _versao = 0; // recarrega o card de pendências
 
   @override
   void initState() {
@@ -32,7 +34,6 @@ class _BaseLayoutState extends State<BaseLayout> {
     final s = await Sessao.carregar();
     if (!mounted) return;
     if (s.nome.isEmpty) {
-      // Sem login salvo: volta para o login
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
@@ -40,6 +41,13 @@ class _BaseLayoutState extends State<BaseLayout> {
       _sessao = s;
       _carregando = false;
     });
+    _recarregarAcessos();
+  }
+
+  Future<void> _recarregarAcessos() async {
+    if (mounted && _acessos.carregado) setState(() => _versao++);
+    final a = await carregarAcessos(_sessao);
+    if (mounted) setState(() => _acessos = a);
   }
 
   void _irParaRelatos() {
@@ -54,7 +62,7 @@ class _BaseLayoutState extends State<BaseLayout> {
 
   void _aoTocarBarra(int i) {
     if (i == 2) {
-      mostrarMenuModulos(context, _sessao, irParaRelatos: _irParaRelatos);
+      mostrarMenuModulos(context, _sessao, _acessos, irParaRelatos: _irParaRelatos, aoVoltar: _recarregarAcessos);
       return;
     }
     setState(() => _pagina = i == 3 ? 2 : i);
@@ -63,14 +71,30 @@ class _BaseLayoutState extends State<BaseLayout> {
   @override
   Widget build(BuildContext context) {
     if (_carregando) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.health_and_safety_outlined, size: 48, color: AppCores.primaria),
+            SizedBox(height: AppEspaco.l),
+            SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.5)),
+            SizedBox(height: AppEspaco.m),
+            Text('Carregando seus módulos...', style: AppTexto.legenda),
+          ]),
+        ),
+      );
     }
 
     return Scaffold(
       body: IndexedStack(
         index: _pagina,
         children: [
-          HomePage(sessao: _sessao, irParaRelatos: _irParaRelatos),
+          HomePage(
+            sessao: _sessao,
+            acessos: _acessos,
+            irParaRelatos: _irParaRelatos,
+            aoAtualizar: _recarregarAcessos,
+            versao: _versao,
+          ),
           RelatosPage(key: _chaveRelatos),
           PerfilPage(sessao: _sessao),
         ],
@@ -99,8 +123,10 @@ class _BaseLayoutState extends State<BaseLayout> {
             ),
             label: 'Módulos',
           ),
-          const NavigationDestination(
-              icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'Perfil'),
+          NavigationDestination(
+            icon: FotoPerfil(nome: _sessao.nome, raio: 13),
+            label: 'Perfil',
+          ),
         ],
       ),
     );

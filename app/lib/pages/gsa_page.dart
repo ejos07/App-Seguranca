@@ -91,7 +91,7 @@ ResumoGsa resumoGsa(Map<String, dynamic> resp) {
 }
 
 Color corPct(double pct) =>
-    pct >= 95 ? const Color(0xFF10B981) : (pct >= 85 ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
+    pct >= 95 ? AppCores.sucesso : (pct >= 85 ? AppCores.alerta : AppCores.perigo);
 
 class GsaPage extends StatefulWidget {
   const GsaPage({super.key});
@@ -106,6 +106,7 @@ class _GsaPageState extends State<GsaPage> {
 
   List<Map<String, dynamic>> _historico = [];
   bool _carregandoHistorico = false;
+  bool _historicoCarregado = false;
   String _erroHistorico = '';
 
   // Formulário
@@ -162,7 +163,10 @@ class _GsaPageState extends State<GsaPage> {
       final r = await apiGet('/api/gsa/');
       if (!mounted) return;
       if (respostaOk(r)) {
-        setState(() => _historico = listaDados(decodificar(r)));
+        setState(() {
+          _historico = listaDados(decodificar(r));
+          _historicoCarregado = true;
+        });
       } else {
         setState(() => _erroHistorico = mensagemErro(r, prefixo: 'Erro ao carregar'));
       }
@@ -274,7 +278,7 @@ class _GsaPageState extends State<GsaPage> {
       final matchAval = _filtroAvaliador.isEmpty || r['avaliador'] == _filtroAvaliador;
       final matchFunc = _filtroFuncao.isEmpty || r['funcao'] == _filtroFuncao;
       final matchData = dentroDoPeriodo(r['data_gsa'], _periodo);
-      final matchPerfil = _sessao.podeExcluir || r['avaliador'] == _avaliador;
+      final matchPerfil = _sessao.podeExcluir || registroEhMeu(_sessao, kRegraGsa, r);
       return matchBusca && matchAval && matchFunc && matchData && matchPerfil;
     }).toList();
     lista.sort((a, b) => soDataIso(b['data_gsa']).compareTo(soDataIso(a['data_gsa'])));
@@ -283,21 +287,37 @@ class _GsaPageState extends State<GsaPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_carregandoSessao) {
+    const titulo = 'Gabarito do Armazém (GSA)';
+    if (_carregandoSessao || (!_historicoCarregado && _erroHistorico.isEmpty)) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    if (!_historicoCarregado) {
+      return TelaErro(titulo: titulo, mensagem: _erroHistorico, onTentarDeNovo: _carregarHistorico);
+    }
+
+    final nivel = calcularAcesso(_sessao, kRegraGsa, _historico);
+    if (nivel == NivelAcesso.nenhum) {
+      return const TelaSemAcesso(
+        titulo: titulo,
+        mensagem: 'O GSA é liberado para Gerente de Operações e Distribuição, Técnico e Analista de '
+            'Segurança, Coordenador de Armazém e para quem já aplicou GSA.',
+      );
+    }
+    final podeCriar = nivel == NivelAcesso.completo;
+
     final abas = <Tab>[
-      const Tab(icon: Icon(Icons.add_circle_outline), text: 'Novo GSA'),
+      if (podeCriar) const Tab(icon: Icon(Icons.add_circle_outline), text: 'Novo GSA'),
       Tab(icon: const Icon(Icons.search), text: _sessao.podeExcluir ? 'Consulta' : 'Meus Registros'),
       if (_sessao.podeExcluir) const Tab(icon: Icon(Icons.pie_chart_outline), text: 'Dashboard'),
     ];
     final telas = <Widget>[
-      _abaIncluir(),
+      if (podeCriar) _abaIncluir(),
       _abaConsulta(),
       if (_sessao.podeExcluir) _abaDashboard(),
     ];
 
     return DefaultTabController(
+      key: ValueKey('abas-${abas.length}'),
       length: abas.length,
       child: Scaffold(
         appBar: AppBar(
@@ -318,108 +338,115 @@ class _GsaPageState extends State<GsaPage> {
     final respondidas = kPerguntasGsa.where((p) => _respostas.containsKey(p)).length;
     final nc = _respostas.values.where((v) => v == kNaoConforme).length;
 
-    return SingleChildScrollView(
-      controller: _scrollForm,
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(child: CampoData(label: 'Data do Gabarito*', valor: _data, onChanged: (d) => setState(() => _data = d))),
-          const SizedBox(width: 12),
-          Expanded(child: CampoSomenteLeitura(label: 'Início (automático)', valor: _horarioInicio)),
-        ]),
-        const SizedBox(height: 14),
-        CampoSomenteLeitura(label: 'Avaliador*', valor: _avaliador),
-        const SizedBox(height: 14),
-        CampoSomenteLeitura(label: 'Função*', valor: _funcao),
-        const Divider(height: 36),
-        Row(children: [
-          const Expanded(child: Text('📋 Questionário GSA', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold))),
-          Text('$respondidas/${kPerguntasGsa.length}',
-              style: TextStyle(fontWeight: FontWeight.bold, color: respondidas == kPerguntasGsa.length ? Colors.green : Colors.grey)),
-          if (nc > 0) ...[const SizedBox(width: 8), Etiqueta('$nc NC', cor: Colors.red)],
-        ]),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _marcarRestantesConforme,
-              icon: const Icon(Icons.done_all, color: Color(0xFF10B981)),
-              label: const Text('Restantes CONFORME', style: TextStyle(fontSize: 12.5)),
+    return Column(children: [
+      Expanded(
+        child: ListView(
+          controller: _scrollForm,
+          padding: const EdgeInsets.all(AppEspaco.l),
+          children: [
+            SecaoForm(
+              titulo: 'Dados do gabarito',
+              icone: Icons.event_note_outlined,
+              child: Column(children: [
+                Row(children: [
+                  Expanded(
+                    child: CampoData(label: 'Data*', valor: _data, onChanged: (d) => setState(() => _data = d)),
+                  ),
+                  const SizedBox(width: AppEspaco.m),
+                  Expanded(
+                    child: CampoSomenteLeitura(label: 'Início', valor: _horarioInicio, icone: Icons.schedule),
+                  ),
+                ]),
+                const SizedBox(height: AppEspaco.m),
+                CampoSomenteLeitura(label: 'Avaliador', valor: _avaliador, icone: Icons.person_outline),
+                const SizedBox(height: AppEspaco.m),
+                CampoSomenteLeitura(label: 'Função', valor: _funcao, icone: Icons.work_outline),
+              ]),
             ),
-          ),
-          const SizedBox(width: 10),
-          OutlinedButton.icon(
-            onPressed: _respostas.isEmpty ? null : _limparRespostas,
-            icon: const Icon(Icons.cleaning_services_outlined),
-            label: const Text('Limpar', style: TextStyle(fontSize: 12.5)),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        ...List.generate(kPerguntasGsa.length, (i) {
-          final p = kPerguntasGsa.elementAt(i);
-          final (cat, item) = separarPerguntaGsa(p);
-          return PerguntaBinaria(
-            numero: i + 1,
-            categoria: cat,
-            pergunta: item,
-            valor: _respostas[p],
-            opcaoBoa: kConforme,
-            opcaoRuim: kNaoConforme,
-            destacarFalta: _tentouSalvar,
-            onChanged: (v) => setState(() => _respostas[p] = v),
-          );
-        }),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _obsCtrl,
-          maxLines: 4,
-          decoration: decoracao(kColunaObservacao, hint: 'Descreva aqui atos, condições ou incidentes identificados...'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppEspaco.xs, AppEspaco.xs, AppEspaco.xs, AppEspaco.s),
+              child: Text('QUESTIONÁRIO GSA • ${kPerguntasGsa.length} ITENS', style: AppTexto.rotulo),
+            ),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _marcarRestantesConforme,
+                  icon: const Icon(Icons.done_all, color: AppCores.sucesso),
+                  label: const Text('Restantes CONFORME', style: TextStyle(fontSize: 12.5)),
+                ),
+              ),
+              const SizedBox(width: AppEspaco.s + 2),
+              OutlinedButton.icon(
+                onPressed: _respostas.isEmpty ? null : _limparRespostas,
+                icon: const Icon(Icons.cleaning_services_outlined),
+                label: const Text('Limpar', style: TextStyle(fontSize: 12.5)),
+              ),
+            ]),
+            const SizedBox(height: AppEspaco.m),
+            ...List.generate(kPerguntasGsa.length, (i) {
+              final p = kPerguntasGsa.elementAt(i);
+              final (cat, item) = separarPerguntaGsa(p);
+              return PerguntaBinaria(
+                numero: i + 1,
+                categoria: cat,
+                pergunta: item,
+                valor: _respostas[p],
+                opcaoBoa: kConforme,
+                opcaoRuim: kNaoConforme,
+                destacarFalta: _tentouSalvar,
+                onChanged: (v) => setState(() => _respostas[p] = v),
+              );
+            }),
+            const SizedBox(height: AppEspaco.s),
+            SecaoForm(
+              titulo: 'Outros relatos',
+              subtitulo: kColunaObservacao,
+              icone: Icons.notes_outlined,
+              child: TextField(
+                controller: _obsCtrl,
+                minLines: 3,
+                maxLines: 6,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: decoracao('Observações', hint: 'Descreva atos, condições ou incidentes identificados...'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          height: 52,
-          child: ElevatedButton.icon(
-            onPressed: _salvando ? null : _salvar,
-            icon: _salvando
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.save),
-            label: Text(_salvando ? 'Salvando...' : 'Finalizar e Salvar GSA', style: const TextStyle(fontSize: 16)),
-          ),
+      ),
+      BarraAcaoInferior(
+        rotulo: 'Finalizar e salvar GSA',
+        icone: Icons.send_rounded,
+        carregando: _salvando,
+        onPressed: _salvar,
+        topo: ProgressoChecklist(
+          respondidas: respondidas,
+          total: kPerguntasGsa.length,
+          ruins: nc,
+          rotuloRuim: 'não conforme',
         ),
-        const SizedBox(height: 32),
-      ]),
-    );
+      ),
+    ]);
   }
 
   Widget _barraFiltros() {
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      child: Column(children: [
-        CampoBuscaTexto(
-            hint: 'Buscar por avaliador, protocolo ou observação...', onChanged: (v) => setState(() => _busca = v)),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(children: [
-            FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
-            if (_sessao.podeExcluir) ...[
-              const SizedBox(width: 8),
-              FiltroMenu(
-                  rotulo: 'Avaliador',
-                  valor: _filtroAvaliador,
-                  opcoes: _distintos('avaliador'),
-                  onChanged: (v) => setState(() => _filtroAvaliador = v)),
-              const SizedBox(width: 8),
-              FiltroMenu(
-                  rotulo: 'Função',
-                  valor: _filtroFuncao,
-                  opcoes: _distintos('funcao'),
-                  onChanged: (v) => setState(() => _filtroFuncao = v)),
-            ],
-          ]),
-        ),
-      ]),
+    return BarraFiltros(
+      hint: 'Buscar avaliador, protocolo ou observação...',
+      onBusca: (v) => setState(() => _busca = v),
+      filtros: [
+        FiltroPeriodo(periodo: _periodo, onChanged: (p) => setState(() => _periodo = p)),
+        if (_sessao.podeExcluir)
+          FiltroMenu(
+              rotulo: 'Avaliador',
+              valor: _filtroAvaliador,
+              opcoes: _distintos('avaliador'),
+              onChanged: (v) => setState(() => _filtroAvaliador = v)),
+        if (_sessao.podeExcluir)
+          FiltroMenu(
+              rotulo: 'Função',
+              valor: _filtroFuncao,
+              opcoes: _distintos('funcao'),
+              onChanged: (v) => setState(() => _filtroFuncao = v)),
+      ],
     );
   }
 
@@ -437,7 +464,7 @@ class _GsaPageState extends State<GsaPage> {
     grupos.forEach((cat, itens) {
       out.add(Padding(
         padding: const EdgeInsets.only(top: 8, bottom: 2),
-        child: Text(cat, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8))),
+        child: Text(cat, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppCores.legivel(const Color(0xFF1D4ED8)))),
       ));
       out.add(ListaRespostas(respostas: itens, ehRuim: (v) => normalizarRespostaGsa(v) == kNaoConforme));
     });
@@ -448,7 +475,7 @@ class _GsaPageState extends State<GsaPage> {
     final lista = _filtrados;
     Widget corpo;
     if (_carregandoHistorico && _historico.isEmpty) {
-      corpo = const Center(child: CircularProgressIndicator());
+      corpo = const ListaCarregando();
     } else if (_erroHistorico.isNotEmpty) {
       corpo = EstadoVazio(_erroHistorico, icone: Icons.wifi_off);
     } else if (lista.isEmpty) {
@@ -463,6 +490,7 @@ class _GsaPageState extends State<GsaPage> {
           final res = resumoGsa(resp);
           final obs = (r['observacao'] ?? '').toString().trim();
           return CardRegistro(
+            fotoNome: (r['avaliador'] ?? '').toString(),
             titulo: (r['protocolo'] ?? r['id'] ?? '-').toString(),
             subtitulo: '${dataBr(r['data_gsa'])} • ${r['funcao'] ?? '-'}\nAvaliador: ${r['avaliador'] ?? '-'}',
             etiqueta: Etiqueta(res.total == 0 ? '-' : '${res.pct.toStringAsFixed(1)}%', cor: corPct(res.pct)),
@@ -498,7 +526,7 @@ class _GsaPageState extends State<GsaPage> {
 
     for (final g in lista) {
       final d = soDataIso(g['data_gsa']);
-      qtdPorData[d] = (qtdPorData[d] ?? 0.0) + 1;
+      if (d.isNotEmpty) qtdPorData[d] = (qtdPorData[d] ?? 0.0) + 1;
       respostasDe(g['respostas_dict']).forEach((pergunta, valor) {
         final r = normalizarRespostaGsa(valor);
         if (r.isEmpty) return;
@@ -521,6 +549,7 @@ class _GsaPageState extends State<GsaPage> {
     final pctGeral = totalResp == 0 ? 0.0 : totalC * 100 / totalResp;
     final comObs = lista.where((g) => (g['observacao'] ?? '').toString().trim().isNotEmpty).length;
     final comNc = lista.where((g) => resumoGsa(respostasDe(g['respostas_dict'])).naoConformes > 0).length;
+    final avaliadores = lista.map((g) => (g['avaliador'] ?? '').toString()).where((s) => s.isNotEmpty).toSet().length;
 
     // % por categoria: pior primeiro
     final cats = porCategoria.entries.map((e) {
@@ -533,43 +562,119 @@ class _GsaPageState extends State<GsaPage> {
 
     final pctPorData = <String, double>{};
     totPorData.forEach((d, t) {
-      if (t > 0) pctPorData[d] = (cPorData[d] ?? 0) * 100 / t;
+      if (t > 0 && d.isNotEmpty) pctPorData[d] = (cPorData[d] ?? 0) * 100 / t;
     });
+
+    final (status, corStatus) = pctGeral >= 95
+        ? ('Padrão atingido', AppCores.sucesso)
+        : (pctGeral >= 85 ? ('Atenção', AppCores.alerta) : ('Abaixo do padrão', AppCores.perigo));
+
+    final mensal = empilharPorMes(lista,
+        campoData: 'data_gsa',
+        qtdSeries: 2,
+        serieDe: (g) => resumoGsa(respostasDe(g['respostas_dict'])).naoConformes > 0 ? 1 : 0);
 
     return Column(children: [
       _barraFiltros(),
       Expanded(
         child: RefreshIndicator(
           onRefresh: _carregarHistorico,
-          child: ListView(padding: const EdgeInsets.all(16), children: [
-            GradeKpis([
-              KpiCard(titulo: 'Total de GSAs', valor: '${lista.length}', cor: const Color(0xFF3B82F6)),
-              KpiCard(
-                  titulo: '% Conformidade Geral',
-                  valor: totalResp == 0 ? '-' : '${pctGeral.toStringAsFixed(1)}%',
-                  cor: corPct(pctGeral)),
-              KpiCard(titulo: 'Itens Não Conformes', valor: '$totalNc', cor: const Color(0xFFEF4444)),
-              KpiCard(titulo: 'GSAs c/ Não Conformidade', valor: '$comNc', cor: const Color(0xFFF59E0B)),
-              KpiCard(titulo: 'GSAs c/ Observação', valor: '$comObs', cor: const Color(0xFF8B5CF6)),
-            ]),
-            CartaoGrafico(titulo: '% Conformidade por Categoria', child: BarrasHorizontais(itens: cats, maximo: 100)),
-            CartaoGrafico(
-              titulo: 'Top 10 Itens Não Conformes',
-              child: ncPorItem.isEmpty
-                  ? const Text('Nenhuma não conformidade no período 🎉', style: TextStyle(color: Colors.grey))
-                  : BarrasHorizontais(itens: topContagem(ncPorItem), cor: const Color(0xFFEF4444)),
-            ),
-            CartaoGrafico(titulo: 'GSAs por Avaliador', child: GraficoPizza(contagem: contar(lista, 'avaliador'))),
-            CartaoGrafico(
-              titulo: 'GSAs realizados por dia',
-              child: GraficoLinhaTempo(porData: qtdPorData, cor: const Color(0xFF3B82F6)),
-            ),
-            CartaoGrafico(
-              titulo: '% Conformidade por dia',
-              child: GraficoLinhaTempo(porData: pctPorData, cor: const Color(0xFF10B981), maxY: 100),
-            ),
-            const SizedBox(height: 24),
-          ]),
+          child: lista.isEmpty
+              ? ListView(children: const [
+                  SizedBox(height: 60),
+                  EstadoVazio('Sem GSAs no filtro atual.', icone: Icons.insights_outlined),
+                ])
+              : ListView(padding: const EdgeInsets.fromLTRB(AppEspaco.l, AppEspaco.l, AppEspaco.l, AppEspaco.xxl), children: [
+                  PainelIndice(
+                    titulo: 'Conformidade geral (GSA)',
+                    percentual: totalResp == 0 ? 0 : pctGeral,
+                    status: totalResp == 0 ? 'Sem respostas' : status,
+                    corStatus: corStatus,
+                    descricao: 'Itens CONFORME sobre o total de itens avaliados.',
+                    numeros: [
+                      ('${lista.length}', 'GSAs'),
+                      ('$totalNc', 'itens NC'),
+                      ('$avaliadores', 'avaliadores'),
+                    ],
+                  ),
+                  const TituloDash('Indicadores'),
+                  GradeKpis([
+                    KpiCard(
+                        titulo: 'GSAs com não conformidade',
+                        valor: '$comNc',
+                        cor: AppCores.alerta,
+                        icone: Icons.gpp_maybe_outlined,
+                        fracao: lista.isEmpty ? 0 : comNc / lista.length,
+                        subtitulo: lista.isEmpty ? null : '${(comNc * 100 / lista.length).toStringAsFixed(0)}% das GSAs'),
+                    KpiCard(
+                        titulo: 'Itens não conformes',
+                        valor: '$totalNc',
+                        cor: AppCores.perigo,
+                        icone: Icons.cancel_outlined,
+                        subtitulo: totalResp == 0 ? null : 'de $totalResp itens avaliados'),
+                    KpiCard(
+                        titulo: 'Avaliadores ativos',
+                        valor: '$avaliadores',
+                        cor: AppCores.roxo,
+                        icone: Icons.badge_outlined),
+                    KpiCard(
+                        titulo: 'GSAs com observação',
+                        valor: '$comObs',
+                        cor: AppCores.info,
+                        icone: Icons.notes_outlined),
+                  ]),
+                  if (cats.isNotEmpty && cats.first.valor < 100)
+                    CartaoInsight(
+                      icone: Icons.priority_high_rounded,
+                      titulo: 'CATEGORIA MAIS CRÍTICA',
+                      texto: '${cats.first.rotulo} — ${cats.first.valor.toStringAsFixed(1)}% de conformidade.',
+                      cor: corPct(cats.first.valor),
+                    ),
+                  const TituloDash('Evolução'),
+                  CartaoGrafico(
+                    titulo: 'GSAs por mês',
+                    subtitulo: '100% conforme x com NC',
+                    icone: Icons.stacked_bar_chart,
+                    child: GraficoBarrasEmpilhadas(
+                      rotulos: mensal.rotulos,
+                      valores: mensal.valores,
+                      series: const [
+                        SerieEmpilhada('100% conforme', AppCores.sucesso),
+                        SerieEmpilhada('Com NC', AppCores.perigo),
+                      ],
+                    ),
+                  ),
+                  CartaoGrafico(
+                    titulo: '% de conformidade',
+                    icone: Icons.show_chart,
+                    child: GraficoLinhaTempo(
+                        porData: pctPorData, cor: AppCores.sucesso, maxY: 100, media: true, sufixo: '%'),
+                  ),
+                  CartaoGrafico(
+                    titulo: 'GSAs realizadas',
+                    icone: Icons.timeline,
+                    child: GraficoLinhaTempo(porData: qtdPorData, cor: AppCores.primaria),
+                  ),
+                  const TituloDash('Detalhamento'),
+                  CartaoGrafico(
+                    titulo: '% de conformidade por categoria',
+                    subtitulo: 'Piores primeiro',
+                    icone: Icons.category_outlined,
+                    child: BarrasHorizontais(itens: cats, maximo: 100, ranking: false),
+                  ),
+                  CartaoGrafico(
+                    titulo: 'Top itens não conformes',
+                    icone: Icons.rule_outlined,
+                    child: ncPorItem.isEmpty
+                        ? const SemDadosGrafico('Nenhuma não conformidade no período 🎉')
+                        : BarrasHorizontais(itens: topContagem(ncPorItem, n: 10), cor: AppCores.perigo),
+                  ),
+                  CartaoGrafico(
+                    titulo: 'GSAs por avaliador',
+                    icone: Icons.person_outline,
+                    child: GraficoPizza(contagem: contar(lista, 'avaliador'), rotuloCentro: 'GSAs'),
+                  ),
+                ]),
         ),
       ),
     ]);

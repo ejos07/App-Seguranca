@@ -5,13 +5,17 @@ import 'pages/login_page.dart';
 import 'pages/base_layout.dart'; // Início | Relatos | + | Perfil
 import 'pages/relatos_form_page.dart';
 import 'pages/dto_form_page.dart';
+import 'pages/dto_page.dart'; // tela de DTO (consulta) que ficava na barra antiga
 import 'pages/gsd_page.dart';
 import 'pages/gsa_page.dart';
 import 'pages/gsp_page.dart';
 import 'pages/gestao_usuarios_page.dart';
 import 'pages/splash.dart';
+import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await TemaApp.carregar(); // tema escolhido no Perfil (Automático / Claro / Escuro)
   runApp(const AppSeguranca());
 }
 
@@ -20,7 +24,9 @@ class AppSeguranca extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: TemaApp.modo,
+      builder: (context, modo, _) => MaterialApp(
       title: 'App Segurança',
       debugShowCheckedModeBanner: false,
 
@@ -34,20 +40,13 @@ class AppSeguranca extends StatelessWidget {
         Locale('pt', 'BR'),
       ],
 
-      theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        primaryColor: const Color(0xFF2563EB),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2563EB),
-          error: const Color(0xFFB91C1C),
-        ),
-        fontFamily: 'Inter',
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1E293B),
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-      ),
+      // Visual centralizado em lib/theme/app_theme.dart
+      theme: AppTheme.claro(),
+      darkTheme: AppTheme.escuro(),
+      themeMode: modo,
+      themeAnimationDuration: Duration.zero,
+      builder: TemaApp.sincronizar,
+      locale: const Locale('pt', 'BR'),
 
       // O aplicativo inicia SEMPRE na SplashScreen
       home: const SplashScreen(),
@@ -57,11 +56,13 @@ class AppSeguranca extends StatelessWidget {
         '/home': (context) => const BaseLayout(),
         '/novo_relato': (context) => const RelatosFormPage(),
         '/novo_dto': (context) => const DtoFormPage(),
+        '/dto': (context) => const DtoPage(),
         '/gsd': (context) => const GsdPage(),
         '/gsa': (context) => const GsaPage(),
         '/gsp': (context) => const GspPage(),
         '/usuarios': (context) => const GestaoUsuariosPage(),
       },
+      ),
     );
   }
 }

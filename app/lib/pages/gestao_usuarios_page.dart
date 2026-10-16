@@ -139,7 +139,7 @@ class _GestaoUsuariosPageState extends State<GestaoUsuariosPage> with SingleTick
         ),
       ),
       body: _carregando && _usuarios.isEmpty
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListaCarregando()
           : TabBarView(controller: _abas, children: [_abaLista(), _abaReset()]),
     );
   }
@@ -148,7 +148,7 @@ class _GestaoUsuariosPageState extends State<GestaoUsuariosPage> with SingleTick
     final lista = _filtrados;
     return Column(children: [
       Container(
-        color: Colors.white,
+        color: AppCores.superficie,
         padding: const EdgeInsets.all(12),
         child: Column(children: [
           FaixaInfo('O sistema possui ${_usuarios.length} colaboradores mapeados.', icone: Icons.people),
@@ -188,11 +188,7 @@ class _GestaoUsuariosPageState extends State<GestaoUsuariosPage> with SingleTick
       child: ExpansionTile(
         shape: const Border(),
         collapsedShape: const Border(),
-        leading: CircleAvatar(
-          backgroundColor: const Color(0xFFE2E8F0),
-          child: Text(_nome(u).isEmpty ? '?' : _nome(u).substring(0, 1),
-              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF334155))),
-        ),
+        leading: FotoPerfil(nome: _nome(u), raio: 20),
         title: Text(_nome(u), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 4),
@@ -221,8 +217,8 @@ class _GestaoUsuariosPageState extends State<GestaoUsuariosPage> with SingleTick
                 });
                 _abas.animateTo(1);
               },
-              icon: const Icon(Icons.key, color: Colors.red),
-              label: const Text('Resetar senha', style: TextStyle(color: Colors.red)),
+              icon: const Icon(Icons.key, color: AppCores.perigo),
+              label: const Text('Resetar senha', style: TextStyle(color: AppCores.perigo)),
             ),
           ),
         ],
